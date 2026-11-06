@@ -41,3 +41,17 @@ test('rolls back a failed migration', () => {
     database.close();
   }
 });
+
+test('upgrades the beta.1 schema without resetting accounts, connections or encrypted data', () => {
+  const database = openDatabase(':memory:');
+  try {
+    database.prepare('INSERT INTO users VALUES(?,?,?,?,?,?)').run('existing', 'existing', 'hash-before-upgrade', 'active', '{}', 'admin');
+    database.prepare('INSERT INTO connections(id,name,provider,credentials,created_at) VALUES(?,?,?,?,?)').run('connection', 'Porkbun', 'porkbun', 'encrypted-before-upgrade', '2026-01-01');
+    database.exec('DROP TABLE notification_sent; DROP TABLE notification_log; DROP TABLE notification_channels; DROP TABLE orders; DROP TABLE payments; DROP TABLE provider_manifests; DROP TABLE settings; DROP TABLE user_roles; DROP TABLE roles; DROP INDEX connections_one_default; ALTER TABLE domains DROP COLUMN metadata_json; ALTER TABLE connections DROP COLUMN provider_ref; ALTER TABLE connections DROP COLUMN is_default; ALTER TABLE connections DROP COLUMN enabled; PRAGMA user_version=3;');
+    migrate(database);
+    assert.equal(database.prepare('SELECT password_hash FROM users').get().password_hash, 'hash-before-upgrade');
+    assert.equal(database.prepare('SELECT credentials,enabled FROM connections').get().credentials, 'encrypted-before-upgrade');
+    assert.equal(database.prepare('SELECT enabled FROM connections').get().enabled, 1);
+    assert.equal(database.prepare('SELECT count(*) AS count FROM orders').get().count, 0);
+  } finally { database.close(); }
+});

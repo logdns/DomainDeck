@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { authenticateAccount } from './accounts.js';
 import { createSession, deleteSession, getSessionUser } from './sessions.js';
 import { HttpError, resource } from './resources.js';
+import { authorize, userPermissions } from './permissions.js';
 
 const assets = new Map([
   ['/', ['text/html; charset=utf-8', new URL('../public/index.html', import.meta.url)]],
@@ -77,16 +78,16 @@ export function createApp(database, options = {}) {
       const token = header.startsWith('Bearer ') ? header.slice(7) : '';
       const user = getSessionUser(database, token);
       if (!user) throw new HttpError(401, 'Unauthorized');
-      if (method === 'GET' && path === '/api/v1/user/info') { respond(response, 200, { userId: user.id, username: user.username, role: user.role }); return; }
+      if (method === 'GET' && path === '/api/v1/user/info') { respond(response, 200, { ...JSON.parse(database.prepare('SELECT profile_json FROM users WHERE id=?').get(user.id).profile_json), userId: user.id, username: user.username, role: user.role, permissions: userPermissions(database, user) }); return; }
       if (method === 'POST' && path === '/api/v1/auth/logout') { deleteSession(database, token); respond(response, 200, { ok: true }); return; }
+      authorize(database, user, path, method);
       if (method !== 'GET') {
-        if (user.role !== 'admin') throw new HttpError(403, 'Administrator permission required');
         if (mutations >= 1) throw new HttpError(409, 'Another change is in progress; retry shortly');
         mutations += 1;
         mutation = true;
       }
-      const body = method === 'GET' ? {} : await readBody(request, path.endsWith('/import') ? 1024 * 1024 : 16384);
-      respond(response, 200, await resource(database, { ...options, user, method, path, body }));
+      const body = method === 'GET' ? {} : await readBody(request, path.endsWith('/import') ? 1024 * 1024 : path.includes('/providers/custom') || path === '/api/v1/notifications' ? 128000 : 16384);
+      respond(response, 200, await resource(database, { ...options, user, method, path, body, query: new URL(request.url, 'http://localhost').searchParams }));
     } catch (error) {
       const status = error.status || (error.code?.startsWith('ERR_SQLITE') ? 409 : 500);
       if (!response.headersSent) respond(response, status, null, error.status ? error.message : status === 409 ? 'Data conflict or invalid fields' : 'Internal server error');

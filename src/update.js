@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { backup } from 'node:sqlite';
-import { HttpError } from './resources.js';
+import { HttpError } from './errors.js';
 
 const versionPattern = /^3\.\d+\.\d+(?:-beta\.\d+)?$/;
 
@@ -55,6 +55,7 @@ export function createUpdater({ version, installDirectory, dataDirectory, databa
   let available = null;
   let busy = false;
   return {
+    status() { return { current: version, installSupported: Boolean(installDirectory), channel: version.includes('-beta.') ? 'beta' : 'stable' }; },
     async check() {
       available = null;
       const releases = JSON.parse((await download('https://api.github.com/repos/logdns/DomainDeck/releases?per_page=30', transport, { bytes: 1024 * 1024, redirects: 2 })).toString());

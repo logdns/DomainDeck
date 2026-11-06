@@ -1,9 +1,12 @@
-function invalid(message) { return Object.assign(new Error(message), { status: 400 }); }
+import { createHash } from 'node:crypto';
+import { HttpError, requireValue } from './errors.js';
+
+function invalid(message) { return new HttpError(400, message); }
 
 export function domainName(value) {
   if (typeof value !== 'string') throw invalid('Invalid domain');
   const name = value.toLowerCase().replace(/\.$/, '');
-  if (name.length > 253 || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/.test(name)) throw invalid('Invalid domain; use punycode for international domains');
+  if (name.length > 253 || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])$/.test(name)) throw invalid('Invalid domain; use punycode for international domains');
   return name;
 }
 
@@ -18,11 +21,12 @@ export function validateCredentials(provider, credentials) {
 async function jsonResponse(response) {
   const chunks = [];
   let size = 0;
-  for await (const chunk of response.body) {
+  for await (const chunk of response.body || []) {
     size += chunk.length;
     if (size > 4 * 1024 * 1024) throw new Error('Provider response too large');
     chunks.push(chunk);
   }
+  if (!size && response.status === 202) return {};
   return JSON.parse(Buffer.concat(chunks).toString());
 }
 
@@ -42,9 +46,10 @@ export class Provider {
       headers['X-API-Key'] = this.credentials.apiKey;
       headers['X-API-Secret'] = this.credentials.apiSecret;
     } else if (!porkbun) headers.Authorization = `Bearer ${this.credentials.token}`;
-    const payload = porkbun ? { ...body, apikey: this.credentials.apiKey, secretapikey: this.credentials.secretKey } : body;
+    if (porkbun && method === 'GET') { headers['X-API-Key'] = this.credentials.apiKey; headers['X-Secret-API-Key'] = this.credentials.secretKey; }
+    const payload = porkbun ? method === 'GET' ? undefined : { ...body, apikey: this.credentials.apiKey, secretapikey: this.credentials.secretKey } : body;
     const response = await this.transport(origin + path, {
-      method: porkbun ? 'POST' : method, headers,
+      method, headers,
       body: payload ? JSON.stringify(payload) : undefined,
       redirect: 'error', signal: AbortSignal.timeout(20000),
     });
@@ -52,6 +57,7 @@ export class Provider {
     if (!response.ok || (!spaceship && (porkbun ? result.status !== 'SUCCESS' : result.success !== true))) {
       throw new Error('Provider rejected request; verify API access and permissions');
     }
+    if (spaceship && response.status === 202) return { ...result, operationId: response.headers.get('spaceship-async-operationid'), accepted: true };
     return result;
   }
 
@@ -88,13 +94,13 @@ export class Provider {
       const result = [];
       for (let skip = 0; skip < 100000; skip += 100) {
         const data = await this.request(`/dns/records/${encodeURIComponent(domain.name)}?take=100&skip=${skip}`);
-        result.push(...(data.items || []).map((item) => ({ ...item, content: item.address || item.value || item.cname || item.exchange || '', name: item.name || item.host || '@' })));
+        result.push(...(data.items || []).map((item) => ({ ...item, id: createHash('sha256').update(JSON.stringify(item)).digest('hex'), raw: item, content: item.address || item.value || item.cname || item.exchange || item.nameserver || item.target || '', name: item.name || item.host || '@' })));
         if (!(data.items || []).length || result.length >= data.total || data.items.length < 100) return result;
       }
       throw new Error('Provider pagination limit exceeded');
     }
     if (this.provider === 'porkbun') {
-      const data = await this.request(`/dns/retrieve/${encodeURIComponent(domain.name)}`);
+      const data = await this.request(`/dns/retrieve/${encodeURIComponent(domain.name)}`, 'POST');
       return (data.records || []).map((record) => ({ ...record, id: String(record.id) }));
     }
     if (!/^[a-f0-9]{32}$/i.test(domain.remote_id)) throw new Error('Sync Cloudflare zones before managing DNS');
@@ -108,7 +114,28 @@ export class Provider {
   }
 
   async writeRecord(domain, input, id, remove = false) {
-    if (this.provider === 'spaceship') throw new Error('Spaceship DNS is read-only in this release');
+    if (this.provider === 'spaceship') {
+      const path = `/dns/records/${encodeURIComponent(domain.name)}`;
+      if (remove) {
+        const original = (await this.records(domain)).find((record) => record.id === id);
+        requireValue(original, 'DNS record changed; refresh before deleting', 409);
+        const { ttl: _ttl, group: _group, ...record } = original.raw;
+        return this.request(path, 'DELETE', [record]);
+      }
+      requireValue(!id, 'Spaceship editing requires creating a replacement and deleting the old record', 409);
+      const type = String(input.type || '').toUpperCase();
+      const host = String(input.name || '@');
+      const content = String(input.content || '');
+      const ttl = Number(input.ttl || 600);
+      requireValue(['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'SRV', 'CAA'].includes(type) && content.length > 0 && content.length <= 4096 && host.length <= 253 && !/[\s/]/.test(host) && Number.isInteger(ttl) && ttl >= 60 && ttl <= 86400, 'Invalid DNS record');
+      const valueField = { A: 'address', AAAA: 'address', CNAME: 'cname', TXT: 'value', MX: 'exchange', NS: 'nameserver', SRV: 'target', CAA: 'value' }[type];
+      const item = { type, name: host, ttl, [valueField]: content };
+      if (['MX', 'SRV'].includes(type)) item.priority = Number(input.priority || 0);
+      if (type === 'SRV') { item.weight = Number(input.weight || 0); item.port = Number(input.port || 0); }
+      if (type === 'CAA') { item.flag = Number(input.flag || 0); item.tag = String(input.tag || 'issue'); }
+      for (const field of ['priority', 'weight', 'port', 'flag']) if (item[field] !== undefined) requireValue(Number.isInteger(item[field]) && item[field] >= 0 && item[field] <= 65535, 'Invalid structured DNS field');
+      return this.request(path, 'PUT', { force: input.force === true, items: [item] });
+    }
     if (id && !/^[a-zA-Z0-9]+$/.test(id)) throw new Error('Invalid record ID');
     const type = String(input.type || '').toUpperCase();
     const name = String(input.name ?? '');
@@ -121,9 +148,88 @@ export class Provider {
       let relative = name === '@' || name === domain.name ? '' : name;
       if (relative.endsWith(`.${domain.name}`)) relative = relative.slice(0, -domain.name.length - 1);
       const path = `/dns/${remove ? 'delete' : id ? 'edit' : 'create'}/${encodeURIComponent(domain.name)}${id ? `/${id}` : ''}`;
-      return this.request(path, 'POST', remove ? {} : { name: relative, type, content, ttl: String(ttl), prio: String(priority) });
+      return this.request(path, 'POST', remove ? {} : { name: relative, type, content, ttl: String(Math.max(ttl, 600)), prio: String(priority) });
     }
     if (!/^[a-f0-9]{32}$/i.test(domain.remote_id)) throw new Error('Sync Cloudflare zones first');
-    return this.request(`/zones/${domain.remote_id}/dns_records${id ? `/${id}` : ''}`, remove ? 'DELETE' : id ? 'PUT' : 'POST', remove ? undefined : { type, name: name === '@' ? domain.name : name, content, ttl, ...(type === 'MX' ? { priority } : {}) });
+    const fullName = name === '@' ? domain.name : name === domain.name || name.endsWith(`.${domain.name}`) ? name : `${name}.${domain.name}`;
+    let data;
+    if (type === 'SRV') {
+      const labels = fullName.split('.');
+      data = { service: labels[0], proto: labels[1], name: labels.slice(2).join('.'), priority, weight: Number(input.weight || 0), port: Number(input.port || 0), target: content };
+      requireValue(/^_[a-z0-9-]+$/i.test(data.service) && /^_(tcp|udp|tls)$/i.test(data.proto) && Number.isInteger(data.port) && data.port >= 0 && data.port <= 65535 && Number.isInteger(data.weight) && data.weight >= 0 && data.weight <= 65535, 'Invalid SRV fields');
+    }
+    if (type === 'CAA') data = { flags: Number(input.flag || 0), tag: String(input.tag || 'issue'), value: content };
+    return this.request(`/zones/${domain.remote_id}/dns_records${id ? `/${id}` : ''}`, remove ? 'DELETE' : id ? 'PATCH' : 'POST', remove ? undefined : { type, name: fullName, ...(data ? { data } : { content }), ttl, ...(type === 'MX' ? { priority } : {}), ...(typeof input.proxied === 'boolean' && ['A', 'AAAA', 'CNAME'].includes(type) ? { proxied: input.proxied } : {}), ...(input.comment ? { comment: String(input.comment).slice(0, 500) } : {}) });
+  }
+
+  async execute(operation, variables = {}) {
+    const name = variables.domain ? encodeURIComponent(domainName(variables.domain)) : '';
+    const input = variables.input || {};
+    const years = variables.years || 1;
+    requireValue(Number.isInteger(years) && years >= 1 && years <= 10, 'Years must be between 1 and 10');
+    if (this.provider === 'spaceship') {
+      const routes = {
+        test: ['GET', '/domains?take=1&skip=0'],
+        getDomain: ['GET', `/domains/${name}`],
+        availability: ['GET', `/domains/${name}/available`],
+        pricing: ['GET', `/domains/${name}/pricing`],
+        register: ['POST', `/domains/${name}`, input],
+        renew: ['POST', `/domains/${name}/renew`, { years, currentExpirationDate: input.currentExpirationDate }],
+        transfer: ['POST', `/domains/${name}/transfer`, input],
+        transferInfo: ['GET', `/domains/${name}/transfer`],
+        setAutoRenew: ['PUT', `/domains/${name}/autorenew`, { isEnabled: variables.isEnabled }],
+        setNameservers: ['PUT', `/domains/${name}/nameservers`, { provider: input.provider || 'custom', ...(input.hosts ? { hosts: input.hosts } : {}) }],
+        getAuthCode: ['GET', `/domains/${name}/transfer/auth-code`],
+        setTransferLock: ['PUT', `/domains/${name}/transfer/lock`, { isLocked: variables.isLocked }],
+        operation: ['GET', `/async-operations/${encodeURIComponent(variables.operationId || '')}`],
+        contacts: ['PUT', '/contacts', input],
+      };
+      const route = routes[operation];
+      requireValue(route, 'Spaceship does not expose this operation', 409);
+      const result = await this.request(route[1], route[0], route[2]);
+      return { result, raw: result, operationId: result.operationId || '', accepted: result.accepted === true };
+    }
+    if (this.provider === 'porkbun') {
+      const routes = {
+        test: ['POST', '/ping'], getDomain: ['POST', `/domain/get/${name}`],
+        availability: ['POST', `/domain/checkDomain/${name}`], pricing: ['POST', `/domain/checkDomain/${name}`],
+        setAutoRenew: ['POST', `/domain/updateAutoRenew/${name}`, { status: variables.isEnabled ? 'on' : 'off' }],
+        setNameservers: ['POST', `/domain/updateNs/${name}`, { ns: input.hosts }],
+        transferInfo: ['GET', `/domain/getTransfer/${name}`], invoices: ['POST', '/account/invoices'], balance: ['GET', '/account/balance'],
+      };
+      if (['register', 'renew', 'transfer'].includes(operation)) {
+        const price = await this.request(`/domain/checkDomain/${name}`, 'POST');
+        const response = price.response || {};
+        const amount = operation === 'register' ? response.price : response.additional?.[operation === 'renew' ? 'renewal' : 'transfer']?.price;
+        requireValue(/^\d+(?:\.\d{1,2})?$/.test(String(amount)), 'Porkbun did not return a valid price', 502);
+        const [whole, fraction = ''] = String(amount).split('.');
+        const cents = Number(BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0')));
+        requireValue(Number.isSafeInteger(cents) && (variables.expectedAmount === undefined || Number(amount) === Number(variables.expectedAmount)), 'Price changed; query a new quote', 409);
+        const path = `/domain/${operation === 'register' ? 'create' : operation}/${name}`;
+        const payload = { cost: cents * (operation === 'transfer' ? 1 : years), ...(operation !== 'transfer' ? { years: String(years) } : {}), ...(operation === 'register' ? { agreeToTerms: '1' } : {}), ...(operation === 'transfer' ? { authCode: input.authCode } : {}) };
+        const result = await this.request(path, 'POST', payload);
+        return { result, raw: result };
+      }
+      const route = routes[operation];
+      requireValue(route, 'Porkbun does not expose this operation', 409);
+      const raw = await this.request(route[1], route[0], route[2]);
+      return { raw, result: raw.response || raw.domain || raw.invoices || raw };
+    }
+    const account = `/accounts/${this.credentials.accountId}`;
+    const routes = {
+      test: ['GET', '/user/tokens/verify'],
+      registrations: ['GET', `${account}/registrar/registrations?per_page=50&page=${Number(variables.page || 1)}`],
+      getDomain: ['GET', `${account}/registrar/registrations/${name}`],
+      availability: ['POST', `${account}/registrar/domain-check`, { domains: [variables.domain] }],
+      pricing: ['POST', `${account}/registrar/domain-check`, { domains: [variables.domain] }],
+      setAutoRenew: ['PATCH', `${account}/registrar/registrations/${name}`, { auto_renew: variables.isEnabled }],
+      setTransferLock: ['PATCH', `${account}/registrar/registrations/${name}`, { locked: variables.isLocked }],
+      payments: ['GET', `${account}/billing/profile`], invoices: ['GET', `${account}/billing/history?per_page=50`],
+      purge: ['POST', `/zones/${encodeURIComponent(variables.zoneId || '')}/purge_cache`, { purge_everything: true }],
+    };
+    const route = routes[operation];
+    requireValue(route, 'Cloudflare does not expose this operation; use its dashboard', 409);
+    const raw = await this.request(route[1], route[0], route[2]);
+    return { raw, result: raw.result };
   }
 }

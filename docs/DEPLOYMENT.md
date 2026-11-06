@@ -6,7 +6,7 @@
 
 服务名称 `domaindeck-node`，运行用户 `domaindeck-node`。程序目录 `/opt/domaindeck-node/current` 指向一个版本目录。数据库、加密密钥和随机初始密码在 `/var/lib/domaindeck-node`。随机密码不打印在日志内，文件权限 0600。
 
-必须一起备份 `domaindeck.sqlite` 与 `vault.key`；丢失密钥将无法恢复注册商凭据。关闭服务后复制整个数据目录是最简单的完整备份方式。不要公开数据目录或初始密码文件。仅支持单进程使用一个数据目录。
+必须一起备份 `domaindeck.sqlite` 与 `vault.key`；丢失密钥将无法恢复注册商或通知凭据。存在任何加密配置而密钥缺失时，程序拒绝启动，不生成替代密钥。关闭服务后复制整个数据目录是最简单的完整备份方式。不要公开数据目录或初始密码文件。仅支持单进程使用一个数据目录。
 
 ```sh
 sudo systemctl stop domaindeck-node
@@ -19,6 +19,41 @@ sudo systemctl start domaindeck-node
 新安装不会读取历史 `data/`。保留旧服务和备份，先添加服务商凭据并执行同步，再导入需要的手工域名 JSON。导入格式为数组或 `{ "domains": [{ "name": "example.com", "expiresAt": "2030-01-01", "notes": "" }] }`。重复域名忽略，不覆盖已存在资产。单次最多 5000 条且请求不超过 1 MiB。
 
 验证域名列表、权限和解析记录后再切换 HTTPS 反向代理目标。DNS 写入会实际提交服务商；测试本地 UI 时不应使用有生产写权限的密钥。服务商 API 账户实际可用性需要部署者验证。
+
+### 完整 JSON 快照导入
+
+beta.2 提供离线迁移工具。先停止旧服务，复制整个旧数据目录生成一致的只读快照；旧服务可在复制完成后继续使用。迁移时读取快照，不对原来的数据目录运行写操作。目标必须是不存在的新目录，不能将新目录设在源快照内。示例：
+
+```sh
+node scripts/import-legacy.js /safe/legacy-snapshot /safe/new-node-data
+DOMAINDECK_DATA=/safe/new-node-data HOST=127.0.0.1 PORT=4781 npm start
+```
+
+工具读取 `users.json`、`roles.json`、`config.json`、`payments.json`、`orders.json`、`notifications.json`、`audit.json`、可选 `domains.json` 和 `providers/*.json`。兼容旧 scrypt 散列并保留账户密码；迁入基础及附加角色、资料、接入（包括 Porkbun `apiSecret` 字段转换）、默认接入、支付台账、订单和通知配置。旧单独的 Spaceship/Cloudflare 配置也转为接入。支付卡号只迁移末四位，不导入 CVV。密钥写入新目录 `vault.key`，凭据加密存储。未知密码散列、重复用户名、缺失管理员或无效服务商配置导致事务失败，拒绝静默重置账户。
+
+不迁移旧登录 token、通知发送历史和内存缓存。源快照没有域名文件时，进入接入页同步获取资产，再补充手工资产。迁移后计费开关及自动通知保持关闭；先检查用户、权限、服务商和提醒配置，再按需启用。整个过程的测试只使用虚构快照，没有替你迁入真实数据。
+
+systemd 部署时，先安装服务并停止，将新安装的空数据目录改名备份，再以新目录作为迁移目标，最后调整所有者并启动。以下路径是示例，请将快照路径替换为实际备份：
+
+```sh
+sudo systemctl stop domaindeck-node
+sudo mv /var/lib/domaindeck-node /var/lib/domaindeck-node-before-import
+sudo node scripts/import-legacy.js /safe/legacy-snapshot /var/lib/domaindeck-node
+sudo chown -R domaindeck-node:domaindeck-node /var/lib/domaindeck-node
+sudo systemctl start domaindeck-node
+```
+
+如果迁移失败，目标新目录会清理；保留原目录备份以便恢复。不要覆盖已有的 `before-import` 备份。程序包中的迁移脚本从解压后的发布包运行；在线更新 bundle 只包含运行程序，不包含迁移脚本。
+
+## 计费、通知与服务商限制
+
+注册、续费和转入默认不可扣款，在设置中明确启用后仍需报价和二次确认。金额对应所选年限；不支持的年限报价拒绝提交，不从一年价格猜测 Spaceship 多年价格。Porkbun 使用整数美分提交成本。唯一请求 ID 持久化，重复请求返回原订单；同域名/接入/操作存在未确认订单时拒绝创建新请求。网络超时并不代表没有扣款，需核对官方账单后在订单页人工处理。
+
+报价核对不能代替官方结算上限。Spaceship 文档说明促销配额变化可能导致最终价格高于报价，交易接口也没有最高扣款额字段；需要严格金额上限时请在官方后台完成购买。续费前从官方获取最新到期时间，避免使用本地手工修改的日期。
+
+本地支付方式只记账，不会替换官方付款方式。Cloudflare 购买使用官方后台，Spaceship 账单使用本地登记；具体支持能力见 [对照表](PARITY.md)。
+
+通知页支持七种渠道。配置以字符串字段 JSON 提交，`channelFields` 接口列出字段；编辑时省略字段保留旧密钥。SMTP 使用 465/TLS 或 587/STARTTLS，验证证书；Webhook 和自定义注册商只能使用公网 HTTPS 443。自动提醒每小时检查，按域名、到期时间、阈值和渠道持久化去重；发送成功才标记已发送。不要把生产渠道用于无意的测试，测试按钮会实际发送。
 
 ## 在线更新
 

@@ -15,7 +15,7 @@ const bundle = validateBundle({ version, files: files.map((path) => ({ path, con
 writeFileSync(join(output, 'DomainDeck-node.bundle.json'), JSON.stringify(bundle));
 const stage = join(output, 'stage');
 mkdirSync(stage);
-for (const path of ['src', 'public', 'package.json', 'README.md', 'docs', 'deploy']) cpSync(join(root, path), join(stage, path), { recursive: true });
+for (const path of ['src', 'public', 'package.json', 'README.md', 'docs', 'deploy', 'scripts']) cpSync(join(root, path), join(stage, path), { recursive: true });
 execFileSync('tar', ['--sort=name', '--mtime=@0', '--owner=0', '--group=0', '--numeric-owner', '--format=ustar', '-czf', join(output, 'DomainDeck-node-linux.tar.gz'), '-C', stage, '.'], { env: { PATH: process.env.PATH, COPYFILE_DISABLE: '1' } });
 const names = ['DomainDeck-node.bundle.json', 'DomainDeck-node-linux.tar.gz'];
 writeFileSync(join(output, 'SHA256SUMS.txt'), names.map((name) => `${createHash('sha256').update(readFileSync(join(output, name))).digest('hex')}  ${name}\n`).join(''));
