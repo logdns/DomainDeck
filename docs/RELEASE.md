@@ -1,6 +1,8 @@
-# DomainDeck 3.0.0-beta.2
+# DomainDeck 3.0.0-beta.3
 
 Node.js 24 + SQLite 的旧版功能迁移测试版，无 npm 依赖、无需前端编译。
+
+本版补全：旧声明式服务商模板与认证/价格/DNS 映射；无报价续费确认；原权限范围及通知发送历史迁移；订单支付关联；隔离演示、命令行参数、自动端口和浏览器启动；概览财务/活动、批量接入同步/测试、运行状态、支付校验、单笔订单同步、权限勾选和通知字段表单。Spaceship 同步保留注册/NS/状态，DNS 查询支持服务标签与公网解析器。非管理员不能创建或修改管理员、重置管理员密码或删除管理员。
 
 - 迁入注册、续费、转入、NS、自动续费、授权码、转移锁、报价与异步订单状态。支持范围按服务商公开 API 限制。
 - 补全 Spaceship 官方 API，包含联系人和 DNS 新增/删除；Porkbun 保留域名、DNS、交易、余额与账单；Cloudflare 分离 DNS 区域与 Registrar 域名，并修正报价为 POST。
@@ -14,7 +16,7 @@ Node.js 24 + SQLite 的旧版功能迁移测试版，无 npm 依赖、无需前�
 
 `DomainDeck-node-linux.tar.gz` 是两种架构通用的程序源码包，需要 Node.js 24。解压后 `sudo bash deploy/install.sh`，服务监听 127.0.0.1:4781。初始管理员 `admin`，密码位于 `/var/lib/domaindeck-node/initial-admin-password`。
 
-`DomainDeck-node.bundle.json` 供后台在线更新使用。`SHA256SUMS.txt` 用于完整性校验。beta.1 可直接更新，启动时事务升级 schema，已有账户及加密接入不重置。降级需同时恢复更新前数据库备份。
+`DomainDeck-node.bundle.json` 供后台在线更新使用。`SHA256SUMS.txt` 用于完整性校验。beta.1/beta.2 可直接更新，启动时事务升级 schema 5，已有账户及加密接入不重置。降级需同时恢复更新前数据库备份。无需真实凭据可运行 `node src/cli.js --demo --addr 127.0.0.1:0`，按终端提示读取隔离目录中的随机密码。桌面使用 Node + 系统浏览器，不提供自包含 Go 外壳。
 
 ## 已知边界
 

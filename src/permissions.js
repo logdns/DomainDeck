@@ -6,7 +6,8 @@ const viewerPermissions = ['domain:read', 'dns:read', 'transfer:read'];
 export function userPermissions(database, user) {
   if (user.role === 'admin') return [...permissions];
   const extra = database.prepare('SELECT roles.permissions_json FROM roles JOIN user_roles ON roles.id=user_roles.role_id WHERE user_roles.user_id=?').all(user.id);
-  return [...new Set([...viewerPermissions, ...extra.flatMap((role) => JSON.parse(role.permissions_json))])].filter((permission) => permissions.includes(permission));
+  const explicit = database.prepare('SELECT base_permissions_json FROM users WHERE id=?').get(user.id)?.base_permissions_json;
+  return [...new Set([...(explicit ? JSON.parse(explicit) : viewerPermissions), ...extra.flatMap((role) => JSON.parse(role.permissions_json))])].filter((permission) => permissions.includes(permission));
 }
 
 export function can(user, permission) {

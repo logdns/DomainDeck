@@ -23,6 +23,7 @@ function read(file, fallback) {
 const snapshot = Object.fromEntries(['users', 'roles', 'payments', 'orders', 'audit', 'domains'].map((name) => [name, read(`${name}.json`, [])]));
 snapshot.config = read('config.json', {});
 snapshot.notifications = read('notifications.json', {});
+snapshot.notificationState = read('notify-state.json', {});
 snapshot.providers = [];
 if (existsSync(join(source, 'providers'))) {
   if (lstatSync(join(source, 'providers')).isSymbolicLink()) throw new Error('Provider directory cannot be a symlink');

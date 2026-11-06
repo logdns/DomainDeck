@@ -4,7 +4,7 @@ import { domainName } from './providers.js';
 
 export function valueAt(value, path) {
   if (!path) return value;
-  return String(path).split('.').reduce((current, field) => current && Object.hasOwn(current, field) ? current[field] : undefined, value);
+  return String(path).split('.').reduce((current, field) => current && Object.hasOwn(current, field) ? current[field] : field === '#text' && current ? current.$text : undefined, value);
 }
 
 function entity(value) {
@@ -60,7 +60,21 @@ function template(value, variables, encode = false) {
   if (Array.isArray(value)) return value.map((entry) => template(entry, variables, encode));
   if (value && typeof value === 'object') {
     if (Object.hasOwn(value, '$literal')) return value.$literal;
-    if (Object.hasOwn(value, '$when')) return value[String(Boolean(valueAt(variables, value.$when)))];
+    if (Object.hasOwn(value, '$when')) return template(value[String(Boolean(valueAt(variables, value.$when)))], variables, encode);
+    if (value.$input === true) return { ...(variables.input || {}), ...Object.fromEntries(Object.entries(value).filter(([field]) => field !== '$input').map(([field, entry]) => [field, template(entry, variables, encode)])) };
+    if (Object.hasOwn(value, '$fmt')) {
+      const source = template(value.value, variables, false);
+      if (value.$fmt === 'int') return Number.parseInt(source, 10) || 0;
+      if (value.$fmt === 'float') return Number(source) || 0;
+      if (value.$fmt === 'bool') return ['true', '1', 'yes', 'on'].includes(String(source).toLowerCase()) || source === true;
+      if (value.$fmt === 'cents') return Number(source) / 100;
+      if (value.$fmt === 'lower') return String(source ?? '').toLowerCase();
+      if (value.$fmt === 'string') return String(source ?? '');
+      if (value.$fmt === 'unix') { const date = new Date(Number(source) * 1000); return Number.isFinite(date.getTime()) ? date.toISOString() : ''; }
+      if (value.$fmt === 'date') return source ? `${String(source).slice(0, 10)}T00:00:00.000Z` : '';
+      if (value.$fmt === 'iso') { const date = Date.parse(String(source || '')); return Number.isFinite(date) ? new Date(date).toISOString() : source; }
+      return source;
+    }
     return Object.fromEntries(Object.entries(value).map(([field, entry]) => [field, template(entry, variables, encode)]));
   }
   if (typeof value !== 'string') return value;
@@ -73,14 +87,19 @@ function mapped(row, mapping) {
   if (!mapping) return row;
   return Object.fromEntries(Object.entries(mapping).map(([field, specification]) => {
     if (specification && typeof specification === 'object' && Object.hasOwn(specification, '$literal')) return [field, specification.$literal];
+    if (specification === null || !['string', 'object'].includes(typeof specification)) return [field, specification];
     let value = valueAt(row, typeof specification === 'string' ? specification : specification.path);
     if (value && typeof value === 'object' && Object.hasOwn(value, '$text')) value = value.$text;
+    if (value && typeof value === 'object' && Object.hasOwn(value, '#text')) value = value['#text'];
     const format = specification?.format;
-    if (format === 'bool') value = [true, 'true', '1', 1, 'yes', 'on'].includes(value);
+    if (format === 'bool') value = ['true', '1', 'yes', 'on'].includes(String(value).toLowerCase()) || typeof value === 'number' && value !== 0;
     else if (format === 'int') value = parseInt(value, 10) || 0;
     else if (format === 'cents') value = Number(value) / 100;
     else if (format === 'lower') value = String(value || '').toLowerCase();
     else if (format === 'string') value = String(value ?? '');
+    else if (format === 'unix') { const date = new Date(Number(value) * 1000); value = Number.isFinite(date.getTime()) ? date.toISOString() : ''; }
+    else if (format === 'date') value = String(value || '').slice(0, 10) ? `${String(value).slice(0, 10)}T00:00:00.000Z` : '';
+    else if (format === 'iso') { const parsed = Date.parse(String(value || '')); value = Number.isFinite(parsed) ? new Date(parsed).toISOString() : String(value || ''); }
     return [field, value ?? null];
   }));
 }
@@ -95,14 +114,19 @@ export class ManifestProvider {
   }
 
   async execute(name, variables = {}, depth = 0) {
+    if (name === 'test' && !this.manifest.ops.test) return { result: await this.domains() };
+    const capability = { setAutoRenew: 'autoRenew', setNameservers: 'nameservers', getAuthCode: 'authCode', setTransferLock: 'transferLock', listDns: 'dnsRead', createDns: 'dnsWrite', updateDns: 'dnsWrite', deleteDns: 'dnsWrite' }[name] || name;
+    requireValue(this.manifest.capabilities?.[capability] !== false, 'Operation disabled by provider manifest', 409);
+    requireValue(!['listDns', 'createDns', 'updateDns', 'deleteDns'].includes(name) || this.manifest.capabilities?.dns !== false, 'DNS disabled by provider manifest', 409);
     const operation = this.manifest.ops[name];
     if (!operation) throw new HttpError(409, 'This provider does not expose that operation');
     requireValue(depth < 3, 'Recursive cost operations are not supported');
-    const values = { ...this.credentials, ...variables };
+    const values = { ...(variables.input || {}), ...variables, ...this.credentials };
     if (operation.cost) {
       const price = await this.execute(operation.cost.op || 'availability', variables, depth + 1);
-      const amount = Number(valueAt(price.raw, operation.cost.path));
-      requireValue(Number.isFinite(amount) && amount >= 0, 'Provider did not return a usable price', 502);
+      const source = valueAt(price.result, operation.cost.path) ?? valueAt(price.raw, operation.cost.path);
+      const amount = Number(source);
+      requireValue(source !== null && source !== undefined && source !== '' && Number.isFinite(amount) && amount >= 0, 'Provider did not return a usable price', 502);
       requireValue(variables.expectedAmount === undefined || Number(variables.expectedAmount) === amount * (operation.cost.byYears ? variables.years || 1 : 1), 'Price changed; query a new quote', 409);
       values.cost = Math.round(amount * (operation.cost.multiply || 1) * (operation.cost.byYears ? variables.years || 1 : 1));
     }
@@ -120,7 +144,11 @@ export class ManifestProvider {
       if (authentication.type === 'header') Object.assign(headers, authValues);
       if (authentication.type === 'query') for (const [field, value] of Object.entries(authValues)) target.searchParams.set(field, String(value));
       if (authentication.type === 'body') body = { ...body, ...authValues };
-      if (authentication.type === 'basic') headers.Authorization = `Basic ${Buffer.from(`${template(authentication.user, values)}:${template(authentication.pass, values)}`).toString('base64')}`;
+      if (authentication.type === 'basic') {
+        const user = values[authentication.user] ?? template(authentication.user, values);
+        const pass = values[authentication.pass] ?? template(authentication.pass, values);
+        headers.Authorization = `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`;
+      }
     }
     const method = operation.method || 'GET';
     const response = await this.transport(target.href, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: ['GET', 'HEAD'].includes(method) ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(20000) });
@@ -134,8 +162,12 @@ export class ManifestProvider {
       const entries = operation.itemsPath ? valueAt(raw, operation.itemsPath) : result;
       result = (Array.isArray(entries) ? entries : entries ? [entries] : []).map((row) => mapped(row, operation.map));
     } else result = mapped(result, operation.map);
+    if (name === 'getDomain' && this.manifest.ops.getNs) {
+      const nameservers = (await this.execute('getNs', variables, depth + 1)).result;
+      result = { ...(result || {}), nameservers };
+    }
     if (operation.values && result && typeof result === 'object') result.result = operation.values[result.result] || result.result;
-    return { raw, result, operationId: response.headers.get('spaceship-async-operationid') || '' };
+    return { raw, result, total: valueAt(raw, operation.totalPath), operationId: response.headers.get('spaceship-async-operationid') || '' };
   }
 
   async domains() {
@@ -144,7 +176,7 @@ export class ManifestProvider {
     const size = this.manifest.ops.listDomains?.pagination?.pageSize;
     let cursor = '';
     for (let page = 1; page <= 1000; page += 1) {
-      const { result } = await this.execute('listDomains', { page, cursor });
+      const { result, total } = await this.execute('listDomains', { page, cursor });
       requireValue(Array.isArray(result), 'listDomains must return items', 502);
       for (const item of result) {
         const name = domainName(item.name || item.domain);
@@ -152,7 +184,7 @@ export class ManifestProvider {
         seen.add(name);
         items.push({ name, remoteId: item.name || item.domain, expiresAt: item.expirationDate || item.expires || '', autoRenew: item.autoRenew === true || item.renewAuto === true });
       }
-      if (!size || result.length < size) return items;
+      if (!size || result.length < size || total !== undefined && items.length >= Number(total)) return items;
       requireValue(items.length < 100000, 'Provider pagination limit exceeded', 502);
       cursor = items.at(-1)?.name || '';
     }
@@ -162,14 +194,22 @@ export class ManifestProvider {
   async records(domain) {
     const { result } = await this.execute('listDns', { domain: domain.name, zoneId: domain.remote_id });
     requireValue(Array.isArray(result), 'listDns must return items', 502);
-    return result;
+    return result.map((record) => ({ ...record, id: String(record.id ?? record.recordId ?? ''), type: String(record.type || '').toUpperCase(), name: record.name || '@', content: record.content ?? record.value ?? record.data ?? '' }));
   }
 
   async writeRecord(domain, input, id, remove = false) {
     const record = { ...input };
+    if (!remove) requireValue(['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'SRV', 'CAA'].includes(String(record.type).toUpperCase()) && typeof record.content === 'string' && record.content.length > 0 && record.content.length <= 4096 && typeof record.name === 'string' && record.name.length <= 253 && !/[\s/]/.test(record.name), 'Invalid DNS record');
+    record.type = String(record.type || '').toUpperCase();
+    delete record.proxied;
+    delete record.proxiable;
     if (this.manifest.dns?.nameMode === 'subdomain') record.name = record.name === domain.name || record.name === '@' ? '' : String(record.name).replace(new RegExp(`\\.${domain.name.replaceAll('.', '\\.')}$`), '');
+    else if (!remove) record.name = record.name === '@' || !record.name ? domain.name : record.name === domain.name || record.name.endsWith(`.${domain.name}`) ? record.name : `${record.name}.${domain.name}`;
     record.ttl = Math.max(Number(record.ttl || 600), this.manifest.dns?.minTTL || 60);
     record[this.manifest.dns?.priorityKey || 'priority'] = Number(record.priority || 0);
+    requireValue(Number.isInteger(record.ttl) && record.ttl <= 86400 && Number.isInteger(Number(record.priority || 0)) && Number(record.priority || 0) >= 0 && Number(record.priority || 0) <= 65535, 'Invalid DNS TTL or priority');
+    if (this.manifest.dns?.priorityKey && this.manifest.dns.priorityKey !== 'priority') delete record.priority;
+    if (this.manifest.dns?.commentKey && record.comment !== undefined) { record[this.manifest.dns.commentKey] = record.comment; if (this.manifest.dns.commentKey !== 'comment') delete record.comment; }
     return (await this.execute(remove ? 'deleteDns' : id ? 'updateDns' : 'createDns', { domain: domain.name, recordId: id || '', zoneId: domain.remote_id, input: record })).result;
   }
 }

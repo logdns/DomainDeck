@@ -21,6 +21,7 @@ async function render(role, language = 'zh', authenticated = true, permissions) 
     '/api/v1/roles': [{ id: 'admin', name: 'Administrator', builtin: true, permissions: ['domain:read'] }],
     '/api/v1/dns/zones': { items: [], notes: [] },
     '/api/v1/settings': { safety: { billingEnabled: false }, contacts: {} },
+    '/api/v1/system/status': { version: '3.0.0-beta.3', runtime: 'v24', database: 'SQLite' },
   };
   const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
   const utilities = await runInNewContext(`(async () => { ${source}\n return {csvCell}; })()`, {
@@ -76,4 +77,12 @@ test('CSV exports quote cells and neutralize spreadsheet formula prefixes', asyn
   assert.equal(utilities.csvCell('=SUM(1,2)'), '"\'=SUM(1,2)"');
   assert.equal(utilities.csvCell('  +command'), '"\'  +command"');
   assert.equal(utilities.csvCell('a"b'), '"a""b"');
+});
+
+test('settings-only role renders runtime settings without requiring domain statistics permission', async () => {
+  const result = await render('viewer', 'en', true, ['settings:read']);
+  await result.events.get('click')({ target: { closest: () => ({ dataset: { action: 'navigate', id: 'settings' } }) } });
+  assert.match(result.nodes.get('#page-content').innerHTML, /3\.0\.0-beta\.3/);
+  assert.match(result.nodes.get('#page-content').innerHTML, /data-action="system-status"/);
+  assert.ok(!result.nodes.get('#page-content').innerHTML.includes('data-action="safety-settings"'));
 });

@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Resolver } from 'node:dns/promises';
-import { domainName } from './providers.js';
+import { domainName, dnsName } from './providers.js';
 import { adapterFor } from './registry.js';
 import { HttpError, requireValue } from './errors.js';
 import { audit, setting, text } from './store.js';
 import { can } from './permissions.js';
+import { publicAddress } from './network.js';
 
 export function priceOf(result, kind, years = 1) {
   const raw = result?.result ?? result;
@@ -31,6 +32,7 @@ function orderView(row) {
 }
 
 async function quote(adapter, name, years) {
+  if (adapter.manifest && !adapter.manifest.ops.availability && !adapter.manifest.ops.pricing) return { availability: null, prices: { register: null, renew: null, transfer: null }, unpriced: true };
   let availability;
   let pricing;
   try { availability = await adapter.execute('availability', { domain: name }); }
@@ -78,7 +80,7 @@ export async function commerceResource(database, context) {
     requireValue(!database.prepare("SELECT id FROM orders WHERE connection_id=? AND domain=? AND kind=? AND status IN ('submitting','pending','needs-review') LIMIT 1").get(connectionId, name, billingKind), 'An unresolved order already exists for this domain. Reconcile it before creating another purchase.', 409);
     const { adapter } = adapterFor(database, context, connectionId);
     requireValue(adapter.provider !== 'cloudflare', 'Cloudflare purchases must be completed in its dashboard', 409);
-    requireValue(!adapter.manifest || adapter.manifest.ops[billingKind], 'This provider does not expose that purchase operation', 409);
+    requireValue(!adapter.manifest || adapter.manifest.ops[billingKind] && adapter.manifest.capabilities?.[billingKind] !== false, 'This provider does not expose that purchase operation', 409);
     const contacts = { ...setting(database, 'contacts'), ...(body.contacts || {}) };
     if (adapter.provider === 'spaceship' && billingKind !== 'renew') {
       requireValue(typeof contacts.registrant === 'string' && contacts.registrant.length > 0, 'Registrant contact ID required');
@@ -148,16 +150,20 @@ export async function commerceResource(database, context) {
   const orderMatch = /^\/api\/v1\/orders\/([a-zA-Z0-9-]+)(?:\/(sync))?$/.exec(path);
   if ((path === '/api/v1/orders/sync' && method === 'POST') || (orderMatch?.[2] && method === 'POST')) {
     const rows = orderMatch?.[2] ? database.prepare('SELECT * FROM orders WHERE id=?').all(orderMatch[1]) : database.prepare("SELECT * FROM orders WHERE status IN ('pending','submitting','needs-review') AND operation_id!='' LIMIT 100").all();
+    requireValue(!orderMatch || rows.length, 'Order not found', 404);
+    requireValue(!orderMatch || rows[0].operation_id, 'This order has no asynchronous operation; reconcile it manually', 409);
+    const results = [];
     for (const row of rows) {
       if (!row.operation_id || !row.connection_id) continue;
       try {
         const result = (await adapterFor(database, context, row.connection_id).adapter.execute('operation', { operationId: row.operation_id })).result;
         const status = result.status === 'success' ? 'completed' : result.status === 'failed' ? 'failed' : 'pending';
         database.prepare('UPDATE orders SET status=?,updated_at=? WHERE id=?').run(status, new Date().toISOString(), row.id);
-      } catch { continue; }
+        results.push({ id: row.id, ok: true, status });
+      } catch { results.push({ id: row.id, ok: false, message: 'Provider operation unavailable; order unchanged' }); }
     }
     log('order.sync', String(rows.length));
-    return { ok: true };
+    return { ok: results.every((result) => result.ok), checked: results.length, results };
   }
   if (orderMatch && ['PUT', 'PATCH'].includes(method)) {
     requireValue(['completed', 'failed', 'needs-review', 'cancelled'].includes(body.status), 'Invalid order status');
@@ -169,10 +175,11 @@ export async function commerceResource(database, context) {
     return { ok: true };
   }
   if (path === '/api/v1/lookup' && method === 'GET') {
-    const name = domainName(query.get('domain'));
-    const type = query.get('type') || 'A';
+    const name = dnsName(query.get('domain') || query.get('name'));
+    const type = (query.get('type') || 'A').toUpperCase();
     requireValue(['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SOA', 'CAA', 'SRV'].includes(type), 'Invalid DNS query type');
     const resolver = context.resolver || new Resolver({ timeout: 2500, tries: 1 });
+    if (query.get('server')) { requireValue(publicAddress(query.get('server')), 'DNS server must be a public IP address'); resolver.setServers([query.get('server')]); }
     try { return { name, type, records: await resolver.resolve(name, type) }; }
     catch { throw new HttpError(502, 'DNS resolution failed or record was not found'); }
   }

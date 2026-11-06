@@ -17,7 +17,7 @@ export async function dnsResource(database, context) {
     }
     return { items, notes };
   }
-  const zoneMatch = /^\/api\/v1\/dns\/zones\/([^/]+)\/(records|purge)(?:\/([a-zA-Z0-9]+))?$/.exec(path);
+  const zoneMatch = /^\/api\/v1\/dns\/zones\/([^/]+)\/(records|purge)(?:\/([a-zA-Z0-9_-]+))?$/.exec(path);
   if (zoneMatch) {
     const zoneId = decodeURIComponent(zoneMatch[1]);
     const separator = zoneId.indexOf(':');

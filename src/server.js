@@ -81,6 +81,7 @@ export function createApp(database, options = {}) {
       if (method === 'GET' && path === '/api/v1/user/info') { respond(response, 200, { ...JSON.parse(database.prepare('SELECT profile_json FROM users WHERE id=?').get(user.id).profile_json), userId: user.id, username: user.username, role: user.role, permissions: userPermissions(database, user) }); return; }
       if (method === 'POST' && path === '/api/v1/auth/logout') { deleteSession(database, token); respond(response, 200, { ok: true }); return; }
       authorize(database, user, path, method);
+      if (options.demo && path === '/api/v1/lookup') throw new HttpError(409, 'External DNS queries are disabled in demo mode');
       if (method !== 'GET') {
         if (mutations >= 1) throw new HttpError(409, 'Another change is in progress; retry shortly');
         mutations += 1;

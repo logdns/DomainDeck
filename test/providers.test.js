@@ -6,9 +6,9 @@ test('Spaceship official headers, take/skip pagination and expiry mapping', asyn
   const calls = [];
   const provider = new Provider('spaceship', { apiKey: 'dummy-key', apiSecret: 'dummy-secret' }, async (url, options) => {
     calls.push({ url, options });
-    return Response.json({ items: [{ name: 'spaceship.example', expirationDate: '2031-01-01', autoRenew: true }], total: 1 });
+    return Response.json({ items: [{ name: 'spaceship.example', expirationDate: '2031-01-01', autoRenew: true, lifecycleStatus: 'registered', registrationDate: '2020-01-01', nameservers: { provider: 'basic' }, eppStatuses: ['clientTransferProhibited'] }], total: 1 });
   });
-  assert.deepEqual(await provider.domains(), [{ name: 'spaceship.example', remoteId: 'spaceship.example', expiresAt: '2031-01-01', autoRenew: true }]);
+  assert.deepEqual(await provider.domains(), [{ name: 'spaceship.example', remoteId: 'spaceship.example', expiresAt: '2031-01-01', autoRenew: true, metadata: { status: 'registered', registrationDate: '2020-01-01', nameservers: { provider: 'basic' }, isPremium: false, eppStatuses: ['clientTransferProhibited'] } }]);
   assert.equal(calls[0].url, 'https://spaceship.dev/api/v1/domains?take=100&skip=0');
   assert.equal(calls[0].options.headers['X-API-Secret'], 'dummy-secret');
   assert.equal(calls[0].options.redirect, 'error');

@@ -60,10 +60,11 @@ export async function resource(database, context) {
   }
   if (path === '/api/v1/accounts' && method === 'GET') {
     if (!can(user, 'account:read')) throw new HttpError(403, 'Account permission required');
-    return database.prepare('SELECT id,username,role,status,profile_json FROM users ORDER BY username').all().map(({ profile_json, ...account }) => ({ ...account, ...JSON.parse(profile_json) }));
+    return database.prepare('SELECT id,username,role,status,profile_json,base_permissions_json FROM users ORDER BY username').all().map(({ profile_json, base_permissions_json, ...account }) => ({ ...account, ...JSON.parse(profile_json), inheritViewer: base_permissions_json === null }));
   }
   if (path === '/api/v1/accounts' && method === 'POST') {
     accountInput(body);
+    if (body.role === 'admin' && user.role !== 'admin') throw new HttpError(403, 'Only administrators can grant administrator access');
     const passwordHash = await hashPassword(body.password);
     database.prepare('INSERT INTO users(id,username,password_hash,status,profile_json,role) VALUES(?,?,?,?,?,?)').run(randomUUID(), body.username, passwordHash, body.status, profileInput(body), body.role);
     log('account.create', body.username);
@@ -74,6 +75,7 @@ export async function resource(database, context) {
     accountInput(body);
     const target = database.prepare('SELECT * FROM users WHERE id = ?').get(accountMatch[1]);
     if (!target) throw new HttpError(404, 'Account not found');
+    if (user.role !== 'admin' && (target.role === 'admin' || body.role === 'admin')) throw new HttpError(403, 'Only administrators can change administrator accounts');
     const previousHash = target.password_hash;
     if (target.id === user.id && !(await verifyPassword(body.currentPassword, previousHash))) throw new HttpError(400, 'Current password required');
     const passwordHash = body.password ? await hashPassword(body.password) : previousHash;
@@ -107,8 +109,8 @@ export async function resource(database, context) {
       if (connectionMatch[2] === 'test') return { ok: true, domains: assets.length };
       database.exec('BEGIN IMMEDIATE');
       try {
-        const insert = database.prepare(`INSERT INTO domains(id,name,connection_id,remote_id,expires_at,auto_renew) VALUES(?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET connection_id=excluded.connection_id,remote_id=excluded.remote_id,expires_at=CASE WHEN excluded.expires_at='' THEN domains.expires_at ELSE excluded.expires_at END, auto_renew=excluded.auto_renew WHERE domains.connection_id IS NULL OR domains.connection_id=excluded.connection_id`);
-        for (const item of assets) insert.run(randomUUID(), item.name, connection.id, item.remoteId, item.expiresAt, Number(item.autoRenew));
+        const insert = database.prepare(`INSERT INTO domains(id,name,connection_id,remote_id,expires_at,auto_renew,metadata_json) VALUES(?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET connection_id=excluded.connection_id,remote_id=excluded.remote_id,expires_at=CASE WHEN excluded.expires_at='' THEN domains.expires_at ELSE excluded.expires_at END, auto_renew=CASE WHEN (SELECT provider FROM connections WHERE id=excluded.connection_id)='cloudflare' THEN domains.auto_renew ELSE excluded.auto_renew END,metadata_json=CASE WHEN excluded.metadata_json='{}' THEN domains.metadata_json ELSE excluded.metadata_json END WHERE domains.connection_id IS NULL OR domains.connection_id=excluded.connection_id`);
+        for (const item of assets) insert.run(randomUUID(), item.name, connection.id, item.remoteId, item.expiresAt, Number(item.autoRenew), JSON.stringify(item.metadata || {}));
         log('connection.sync', connection.name);
         database.exec('COMMIT');
       } catch (error) { database.exec('ROLLBACK'); throw error; }
@@ -140,9 +142,9 @@ export async function resource(database, context) {
     } catch (error) { database.exec('ROLLBACK'); throw error; }
     return { ok: true, processed: entries.length };
   }
-  const domainMatch = /^\/api\/v1\/domains\/([a-zA-Z0-9-]+)(?:\/dns(?:\/([a-zA-Z0-9]+))?)?$/.exec(path);
+  const domainMatch = /^\/api\/v1\/domains\/([a-zA-Z0-9_.-]+)(?:\/dns(?:\/([a-zA-Z0-9_-]+))?)?$/.exec(path);
   if (domainMatch) {
-    const domain = database.prepare('SELECT * FROM domains WHERE id=?').get(domainMatch[1]);
+    const domain = database.prepare('SELECT * FROM domains WHERE id=? OR name=?').get(domainMatch[1], domainMatch[1]);
     if (!domain) throw new HttpError(404, 'Domain not found');
     if (!path.includes('/dns') && method === 'GET') return domain;
     if (!path.includes('/dns') && ['PUT', 'PATCH'].includes(method)) {

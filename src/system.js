@@ -45,6 +45,7 @@ export async function systemResource(database, context) {
       return manifest;
     }
     if (method === 'DELETE') {
+      requireValue(database.prepare('SELECT id FROM provider_manifests WHERE id=?').get(manifestMatch[1]), 'Built-in presets cannot be deleted', 409);
       requireValue(!database.prepare('SELECT count(*) AS count FROM connections WHERE provider_ref=?').get(manifestMatch[1]).count, 'Provider still has connections', 409);
       database.prepare('DELETE FROM provider_manifests WHERE id=?').run(manifestMatch[1]);
       log('provider.delete', manifestMatch[1]);
@@ -143,6 +144,7 @@ export async function systemResource(database, context) {
       requireValue(Array.isArray(body.roleIds) && body.roleIds.length <= 20 && body.roleIds.every((id) => typeof id === 'string'), 'Invalid role IDs');
       requireValue(database.prepare('SELECT id FROM users WHERE id=?').get(userRolesMatch[1]), 'Account not found', 404);
       transaction(database, () => {
+        if (typeof body.inheritViewer === 'boolean') database.prepare('UPDATE users SET base_permissions_json=? WHERE id=?').run(body.inheritViewer ? null : '[]', userRolesMatch[1]);
         database.prepare('DELETE FROM user_roles WHERE user_id=?').run(userRolesMatch[1]);
         for (const id of new Set(body.roleIds)) database.prepare('INSERT INTO user_roles VALUES(?,?)').run(userRolesMatch[1], id);
         database.prepare('DELETE FROM sessions WHERE user_id=?').run(userRolesMatch[1]);
@@ -156,6 +158,7 @@ export async function systemResource(database, context) {
   if (passwordMatch && method === 'POST') {
     const account = database.prepare('SELECT * FROM users WHERE id=?').get(passwordMatch[1]);
     requireValue(account, 'Account not found', 404);
+    requireValue(account.role !== 'admin' || user.role === 'admin', 'Only administrators can reset administrator passwords', 403);
     if (account.id === user.id) requireValue(await verifyPassword(body.currentPassword, account.password_hash), 'Current password required');
     const hash = await hashPassword(body.password);
     transaction(database, () => {
@@ -169,6 +172,7 @@ export async function systemResource(database, context) {
   if (accountMatch && method === 'DELETE') {
     const account = database.prepare('SELECT * FROM users WHERE id=?').get(accountMatch[1]);
     requireValue(account, 'Account not found', 404);
+    requireValue(account.role !== 'admin' || user.role === 'admin', 'Only administrators can remove administrator accounts', 403);
     requireValue(account.id !== user.id, 'Cannot delete the signed-in account');
     requireValue(account.role !== 'admin' || account.status !== 'active' || database.prepare("SELECT count(*) AS count FROM users WHERE role='admin' AND status='active'").get().count > 1, 'Retain the last administrator');
     database.prepare('DELETE FROM users WHERE id=?').run(account.id);

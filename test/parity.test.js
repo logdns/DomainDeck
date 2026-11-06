@@ -325,6 +325,90 @@ test('custom manifests paginate with bounded cursors and abort repeated pages', 
   await assert.rejects(broken.domains(), /pagination repeated/);
 });
 
+test('remaining legacy management actions validate saved payments, DNS service labels, and missing order states', async () => fixture(async ({ call }) => {
+  const payment = await call('/payments', 'POST', { name: 'Expired fixture', type: 'card', last4: '1234', expiry: '2000-01' });
+  const checked = await call('/payments/verify', 'POST', { paymentMethodId: payment.data.id });
+  assert.equal(checked.data.valid, false);
+  assert.ok(checked.data.issues.includes('Card has expired'));
+  assert.equal((await call('/payments/verify', 'POST', { paymentMethodId: 'missing' })).status, 404);
+  assert.equal((await call('/lookup?domain=_sip._tcp.example.com&type=srv')).status, 200);
+  assert.equal((await call('/lookup?domain=_dmarc.example.com&type=TXT&server=127.0.0.1')).status, 400);
+  assert.equal((await call('/orders/missing/sync', 'POST')).status, 404);
+  assert.equal((await call('/providers/custom/godaddy', 'DELETE')).status, 409);
+  const domain = await call('/domains', 'POST', { name: 'byname.example' });
+  assert.equal((await call('/domains/byname.example')).data.id, domain.data.id);
+}));
+
+test('account managers cannot promote themselves or reset and delete administrators', async () => fixture(async ({ call, viewer, admin, tokens, database }) => {
+  const role = await call('/roles', 'POST', { name: 'Account manager', permissions: ['account:write'] });
+  await call(`/accounts/${viewer.id}/roles`, 'PUT', { roleIds: [role.data.id] });
+  tokens.viewer = createSession(database, viewer.id).accessToken;
+  assert.equal((await call(`/accounts/${viewer.id}`, 'PUT', { username: 'viewer', role: 'admin', status: 'active', currentPassword: 'viewer-test-password' }, 'viewer')).status, 403);
+  assert.equal((await call(`/accounts/${admin.id}/password`, 'POST', { password: 'attacker-password' }, 'viewer')).status, 403);
+  assert.equal((await call(`/accounts/${admin.id}`, 'DELETE', null, 'viewer')).status, 403);
+  assert.equal((await call('/accounts', 'POST', { username: 'promoted', password: 'attacker-password', role: 'admin', status: 'active' }, 'viewer')).status, 403);
+}));
+
+test('administrators can assign a role without inherited domain read access and session permissions remain exact', async () => fixture(async ({ call, viewer, tokens, database }) => {
+  const role = await call('/roles', 'POST', { name: 'Settings reader', permissions: ['settings:read'] });
+  await call(`/accounts/${viewer.id}/roles`, 'PUT', { roleIds: [role.data.id], inheritViewer: false });
+  tokens.viewer = createSession(database, viewer.id).accessToken;
+  assert.deepEqual((await call('/user/info', 'GET', null, 'viewer')).data.permissions, ['settings:read']);
+  assert.equal((await call('/system/status', 'GET', null, 'viewer')).status, 200);
+  assert.equal((await call('/overview', 'GET', null, 'viewer')).status, 403);
+  assert.equal((await call('/domains', 'GET', null, 'viewer')).status, 403);
+  assert.equal((await call('/accounts')).data.find((account) => account.id === viewer.id).inheritViewer, false);
+}));
+
+test('legacy migration retains restrictive roles, notification delivery history and linked payment orders', async () => {
+  const database = openDatabase(':memory:');
+  const key = randomBytes(32);
+  try {
+    const passwordHash = await hashPassword('migration-fixture-password');
+    importLegacy(database, key, {
+      users: [{ username: 'admin', passwordHash, roleCodes: ['super'] }, { username: 'auditor', passwordHash, roleCodes: ['auditonly'] }],
+      roles: [{ id: 'auditonly', code: 'auditonly', name: 'Audit only', permissions: ['audit:read'] }],
+      payments: [{ id: 'oldpayment', type: 'card', name: 'Card', account: '4111111111111111' }],
+      orders: [{ domain: 'fixture.example', paymentMethodId: 'oldpayment', note: 'Original note' }],
+      notifications: { channels: [{ id: 'oldchannel', type: 'webhook', name: 'Fixture', config: { url: 'https://hooks.example.com/private' } }] },
+      notificationState: { sent: { 'fixture.example|7|2030-01-01': 1700000000000 }, log: [{ channel: 'Fixture', domain: 'fixture.example', ok: true }] },
+    });
+    const viewer = database.prepare("SELECT * FROM users WHERE username='auditor'").get();
+    const rolePermissions = (await import('../src/permissions.js')).userPermissions(database, viewer);
+    assert.deepEqual(rolePermissions, ['audit:read']);
+    const details = JSON.parse(database.prepare('SELECT details_json FROM orders').get().details_json);
+    assert.equal(details.paymentMethodId, database.prepare('SELECT id FROM payments').get().id);
+    assert.equal(details.note, 'Original note');
+    assert.equal(database.prepare('SELECT count(*) AS count FROM notification_log').get().count, 1);
+    assert.equal(database.prepare('SELECT dedupe_key FROM notification_sent').get().dedupe_key, 'legacy|fixture.example|2030-01-01|7');
+  } finally { database.close(); }
+});
+
+test('unpriced legacy registrars expose renewal quotes and require explicit unpriced billing consent', async () => {
+  let renewals = 0;
+  await fixture(async ({ call }) => {
+    const manifest = { id: 'unpricedfixture', name: 'Unpriced fixture', fields: [{ key: 'apiKey', label: 'Key', required: true }], request: { baseUrl: 'https://registrar.example.com', auth: { type: 'none' } }, ops: { listDomains: { path: '/domains' }, renew: { path: '/renew', method: 'POST', body: { years: '{years}' } } } };
+    await call('/providers/custom', 'POST', { manifest });
+    const connectionId = (await call('/connections', 'POST', { provider: manifest.id, name: 'Fixture', credentials: { apiKey: 'fixture-key' } })).data.id;
+    const quotes = await call(`/availability?domain=fixture.example&connectionId=${connectionId}`);
+    assert.equal(quotes.data.quotes[0].unpriced, true);
+    assert.equal(quotes.data.quotes[0].supports.renew, true);
+    assert.equal(quotes.data.quotes[0].prices.renew, null);
+    await call(`/connections/${connectionId}/sync`, 'POST');
+    const domain = (await call('/domains')).data[0];
+    await call('/settings', 'PUT', { safety: { billingEnabled: true } });
+    const purchase = { requestId: 'unpriced-renewal-fixture', confirm: true };
+    assert.equal((await call(`/domains/${domain.id}/renew`, 'POST', purchase)).status, 409);
+    assert.equal(renewals, 0);
+    assert.equal((await call(`/domains/${domain.id}/renew`, 'POST', { ...purchase, acceptUnpriced: true })).status, 200);
+    assert.equal(renewals, 1);
+  }, { transport: async (url) => {
+    if (url.endsWith('/domains')) return Response.json([{ name: 'fixture.example' }]);
+    renewals += 1;
+    return Response.json({ ok: true });
+  } });
+});
+
 test('Spaceship renewal fetches authoritative expiry and transfer omits registration-only fields and stored auth codes', async () => fixture(async ({ call, add, requests }) => {
   const connectionId = await add();
   await call(`/connections/${connectionId}/sync`, 'POST');

@@ -88,7 +88,7 @@ export function createNotificationService(database, context) {
       for (const channel of selected) result.push(await send(channel, { title: 'DomainDeck test', text: 'Notification channel test.' }));
       return result;
     },
-    async run() {
+    async run(force = false) {
       requireValue(!running, 'Notification check already running', 409);
       running = true;
       try {
@@ -101,9 +101,10 @@ export function createNotificationService(database, context) {
           const days = Math.ceil((Date.parse(domain.expires_at) - Date.now()) / 86400000);
           if (!Number.isFinite(days) || days < 0 || !rules.expiryDays.some((threshold) => days <= threshold)) continue;
           const threshold = [...rules.expiryDays].sort((first, second) => first - second).find((value) => days <= value);
+          if (!force && database.prepare('SELECT dedupe_key FROM notification_sent WHERE dedupe_key=?').get(`legacy|${domain.name}|${domain.expires_at.slice(0, 10)}|${threshold}`)) continue;
           for (const channel of targets) {
             const dedupe = `${domain.name}|${domain.expires_at}|${threshold}|${channel.id}`;
-            if (database.prepare('SELECT dedupe_key FROM notification_sent WHERE dedupe_key=?').get(dedupe)) continue;
+            if (!force && database.prepare('SELECT dedupe_key FROM notification_sent WHERE dedupe_key=?').get(dedupe)) continue;
             const result = await send(channel, { title: 'DomainDeck expiry reminder', text: `${domain.name} expires ${domain.expires_at} (${days} days).` });
             if (result.ok) { database.prepare('INSERT OR IGNORE INTO notification_sent VALUES(?,?)').run(dedupe, new Date().toISOString()); sent += 1; }
           }
@@ -124,7 +125,11 @@ export async function notificationResource(database, context) {
   const service = context.notifications || createNotificationService(database, context);
   if (path === '/api/v1/notifications' && method === 'GET') return {
     ...setting(database, 'notifications'), lastResult: setting(database, 'notifications-last'), channelTypes, channelFields,
-    channels: database.prepare('SELECT id,name,type,enabled FROM notification_channels ORDER BY name').all().map((row) => ({ ...row, enabled: Boolean(row.enabled), config: {} })),
+    channels: database.prepare('SELECT * FROM notification_channels ORDER BY name').all().map((row) => {
+      const config = decrypt(context.key, row.config);
+      const safe = ['host', 'port', 'user', 'from', 'to', 'chatId', 'group'];
+      return { id: row.id, name: row.name, type: row.type, enabled: Boolean(row.enabled), config: Object.fromEntries(Object.entries(config).filter(([field]) => safe.includes(field))), configuredFields: Object.keys(config).filter((field) => config[field]) };
+    }),
   };
   if (path === '/api/v1/notifications' && method === 'PUT') {
     const expiryDays = body.expiryDays || body.rules?.expiryDays || setting(database, 'notifications').expiryDays;
@@ -136,7 +141,7 @@ export async function notificationResource(database, context) {
         const preserved = new Set();
         for (const channel of body.channels) {
           const old = channel.id ? database.prepare('SELECT * FROM notification_channels WHERE id=?').get(channel.id) : null;
-          const config = { ...(old ? decrypt(context.key, old.config) : {}), ...(channel.config || {}) };
+          const config = Object.fromEntries(Object.entries({ ...(old?.type === channel.type ? decrypt(context.key, old.config) : {}), ...(channel.config || {}) }).filter(([field]) => channelFields[channel.type]?.includes(field)));
           validateChannel(channel.type, config);
           const id = old?.id || randomUUID();
           database.prepare('INSERT INTO notification_channels VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,type=excluded.type,enabled=excluded.enabled,config=excluded.config').run(id, text(channel.name || channel.type, 100), channel.type, Number(channel.enabled !== false), encrypt(context.key, config));
@@ -150,5 +155,5 @@ export async function notificationResource(database, context) {
   }
   if (path === '/api/v1/notifications/log' && method === 'GET') return database.prepare('SELECT * FROM notification_log ORDER BY id DESC LIMIT 200').all();
   if (path === '/api/v1/notifications/test' && method === 'POST') return service.test(body.channelId);
-  if (path === '/api/v1/notifications/run' && method === 'POST') return service.run();
+  if (path === '/api/v1/notifications/run' && method === 'POST') return service.run(body.force === true);
 }

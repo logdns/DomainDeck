@@ -10,6 +10,13 @@ export function domainName(value) {
   return name;
 }
 
+export function dnsName(value) {
+  if (typeof value !== 'string') throw invalid('Invalid DNS name');
+  const name = value.toLowerCase().replace(/\.$/, '');
+  if (name.length > 253 || !/^(?=.{1,253}$)(?:[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/.test(name)) throw invalid('Invalid DNS name');
+  return name;
+}
+
 export function validateCredentials(provider, credentials) {
   if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) throw invalid('Credentials required');
   const fields = provider === 'porkbun' ? ['apiKey', 'secretKey'] : provider === 'spaceship' ? ['apiKey', 'apiSecret'] : provider === 'cloudflare' ? ['token', 'accountId'] : [];
@@ -66,7 +73,7 @@ export class Provider {
       const result = [];
       for (let skip = 0; skip < 100000; skip += 100) {
         const data = await this.request(`/domains?take=100&skip=${skip}`);
-        for (const item of data.items || []) result.push({ name: domainName(item.name), remoteId: item.name, expiresAt: item.expirationDate || '', autoRenew: item.autoRenew === true });
+        for (const item of data.items || []) result.push({ name: domainName(item.name), remoteId: item.name, expiresAt: item.expirationDate || '', autoRenew: item.autoRenew === true, metadata: { status: item.lifecycleStatus || '', registrationDate: item.registrationDate || '', nameservers: item.nameservers || null, isPremium: item.isPremium === true, eppStatuses: item.eppStatuses || [] } });
         if (!(data.items || []).length || result.length >= data.total || data.items.length < 100) return result;
       }
       throw new Error('Provider pagination limit exceeded');
@@ -75,7 +82,7 @@ export class Provider {
       const result = [];
       for (let offset = 0; offset < 100000; offset += 1000) {
         const data = await this.request('/domain/listAll', 'POST', { start: offset, includeLabels: 'yes' });
-        for (const item of data.domains || []) result.push({ name: domainName(item.domain), remoteId: item.domain, expiresAt: item.expireDate || '', autoRenew: ['1', 'true'].includes(String(item.autoRenew)) });
+        for (const item of data.domains || []) result.push({ name: domainName(item.domain), remoteId: item.domain, expiresAt: item.expireDate || '', autoRenew: ['1', 'true'].includes(String(item.autoRenew)), metadata: { status: item.status || '', registrationDate: item.createDate || '', nameservers: item.nameservers || null } });
         if ((data.domains || []).length < 1000) return result;
       }
       throw new Error('Provider pagination limit exceeded');
@@ -107,7 +114,7 @@ export class Provider {
     const records = [];
     for (let page = 1; page <= 1000; page += 1) {
       const data = await this.request(`/zones/${domain.remote_id}/dns_records?per_page=100&page=${page}`);
-      records.push(...data.result);
+      records.push(...data.result.map((record) => ({ ...record, ...(['SRV', 'CAA'].includes(record.type) && record.data ? { content: record.type === 'SRV' ? record.data.target : record.data.value, ...(record.type === 'SRV' ? { priority: record.data.priority, weight: record.data.weight, port: record.data.port } : { flag: record.data.flags, tag: record.data.tag }) } : {}) })));
       if (page >= (data.result_info?.total_pages || 1)) return records;
     }
     throw new Error('Provider pagination limit exceeded');
@@ -134,6 +141,7 @@ export class Provider {
       if (type === 'SRV') { item.weight = Number(input.weight || 0); item.port = Number(input.port || 0); }
       if (type === 'CAA') { item.flag = Number(input.flag || 0); item.tag = String(input.tag || 'issue'); }
       for (const field of ['priority', 'weight', 'port', 'flag']) if (item[field] !== undefined) requireValue(Number.isInteger(item[field]) && item[field] >= 0 && item[field] <= 65535, 'Invalid structured DNS field');
+      if (type === 'CAA') requireValue(item.flag <= 255 && /^[a-z0-9-]{1,32}$/i.test(item.tag), 'Invalid CAA fields');
       return this.request(path, 'PUT', { force: input.force === true, items: [item] });
     }
     if (id && !/^[a-zA-Z0-9]+$/.test(id)) throw new Error('Invalid record ID');
@@ -159,6 +167,7 @@ export class Provider {
       requireValue(/^_[a-z0-9-]+$/i.test(data.service) && /^_(tcp|udp|tls)$/i.test(data.proto) && Number.isInteger(data.port) && data.port >= 0 && data.port <= 65535 && Number.isInteger(data.weight) && data.weight >= 0 && data.weight <= 65535, 'Invalid SRV fields');
     }
     if (type === 'CAA') data = { flags: Number(input.flag || 0), tag: String(input.tag || 'issue'), value: content };
+    if (type === 'CAA' && !remove) requireValue(Number.isInteger(data.flags) && data.flags >= 0 && data.flags <= 255 && /^[a-z0-9-]{1,32}$/i.test(data.tag), 'Invalid CAA fields');
     return this.request(`/zones/${domain.remote_id}/dns_records${id ? `/${id}` : ''}`, remove ? 'DELETE' : id ? 'PATCH' : 'POST', remove ? undefined : { type, name: fullName, ...(data ? { data } : { content }), ttl, ...(type === 'MX' ? { priority } : {}), ...(typeof input.proxied === 'boolean' && ['A', 'AAAA', 'CNAME'].includes(type) ? { proxied: input.proxied } : {}), ...(input.comment ? { comment: String(input.comment).slice(0, 500) } : {}) });
   }
 

@@ -42,6 +42,7 @@ const migrations = [
   CREATE TABLE notification_channels (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), config TEXT NOT NULL) STRICT;
   CREATE TABLE notification_log (id INTEGER PRIMARY KEY, channel_id TEXT NOT NULL, subject TEXT NOT NULL, ok INTEGER NOT NULL CHECK(ok IN (0,1)), message TEXT NOT NULL, created_at TEXT NOT NULL) STRICT;
   CREATE TABLE notification_sent (dedupe_key TEXT PRIMARY KEY, sent_at TEXT NOT NULL) STRICT;`,
+  `ALTER TABLE users ADD COLUMN base_permissions_json TEXT CHECK(base_permissions_json IS NULL OR json_valid(base_permissions_json));`,
 ];
 
 export function migrate(database) {

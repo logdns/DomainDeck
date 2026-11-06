@@ -21,6 +21,10 @@ words.zh.dnsHint = 'DNS 修改会立即提交至服务商。Spaceship 支持新�
 words.en.dnsHint = 'DNS changes reach the provider immediately. Spaceship supports add/delete; create a replacement before deleting the original.';
 Object.assign(words.zh, { all: '全部', '30days': '30 天内到期', expired: '已到期', sort: '排序', realName: '姓名', transferStatus: '查询转入状态', localEdit: '编辑资产备注', changePassword: '修改密码', renewalQuote: '查询续费报价' });
 Object.assign(words.en, { all: 'All', '30days': 'Expires within 30 days', expired: 'Expired', sort: 'Sort', realName: 'Full name', transferStatus: 'Check transfer status', localEdit: 'Edit asset metadata', changePassword: 'Change password', renewalQuote: 'Get renewal quote' });
+Object.assign(words.zh, { syncAll: '同步全部接入', systemStatus: '运行状态', testConnections: '测试全部接入', capabilities: '支付能力', verifyPayment: '本地校验', syncOrder: '同步此订单', resolver: 'DNS 服务器 IP（留空用系统默认）', spend: '本年支出', activity: '最近操作', nsMode: 'NS 模式', basic: 'Spaceship 默认 NS', custom: '自定义 NS', configured: '已配置；留空保留', permissionSelect: '选择权限', roleSelect: '选择附加角色', contactOptional: '联系人 ID（留空使用默认）' });
+Object.assign(words.en, { syncAll: 'Sync all connections', systemStatus: 'Runtime status', testConnections: 'Test all connections', capabilities: 'Billing capabilities', verifyPayment: 'Validate locally', syncOrder: 'Sync this order', resolver: 'DNS server IP (optional)', spend: 'Spend this year', activity: 'Recent activity', nsMode: 'Nameserver mode', basic: 'Spaceship default NS', custom: 'Custom NS', configured: 'Configured; leave blank to retain', permissionSelect: 'Select permissions', roleSelect: 'Select additional roles', contactOptional: 'Contact ID (blank uses default)' });
+words.zh.inheritViewer = '授予基础域名、DNS 与转入读取权限';
+words.en.inheritViewer = 'Include basic domain, DNS and transfer read permissions';
 let generation = 0;
 const app = document.querySelector('#app');
 const dialog = document.querySelector('#dialog');
@@ -104,12 +108,17 @@ function csvCell(value) {
   const text = String(value ?? '');
   return `"${(/^[\s]*[=+\-@\t\r]/.test(text) ? "'" : '') + text.replaceAll('"', '""')}"`;
 }
+function overviewDetails(data) {
+  const spend = data.spendThisYear ? `<section class="card"><h2>${translate('spend')}</h2>${Object.entries(data.spendThisYear).map(([currency, amount]) => `<p><strong>${escape(Number(amount).toFixed(2))} ${escape(currency)}</strong></p>`).join('') || empty()}${button('navigate', 'orders', 'orders')}</section>` : '';
+  const activity = data.recentActivity ? `<section class="card"><h2>${translate('activity')}</h2>${table(['date', 'username', 'action', 'target'], data.recentActivity.map((entry) => [escape(entry.created_at), escape(entry.username), escape(entry.action), escape(entry.target)]))}</section>` : '';
+  return spend + activity;
+}
 async function loadPage() {
   const revision = ++generation;
   shell();
   try {
     if (await workflowPage(revision)) return;
-    const data = currentPage === 'settings' ? await api('/overview') : await api(`/${currentPage}`);
+    const data = currentPage === 'settings' ? await api('/system/status') : await api(`/${currentPage}`);
     if (revision !== generation || !user) return;
     pageData = data;
     const content = document.querySelector('#page-content');
@@ -118,7 +127,7 @@ async function loadPage() {
       const recent = await api('/domains');
       if (revision !== generation) return;
       domains = recent;
-      content.innerHTML = `<section class="hero"><div><span class="eyebrow">A CLEAR VIEW OF YOUR DOMAINS</span><h2>${translate('greeting')}</h2><p>${translate('subtitle')}</p></div><div class="hero-orbit">◎</div></section><div class="metrics">${[['total', data.domains, 'ASSETS'], ['connected', data.connections, 'PROVIDERS'], ['expiring', data.expiring, '30 DAYS']].map(([label, value, badge]) => `<section class="card metric"><div><span class="muted">${translate(label)}</span><strong>${value}</strong><small>${translate('workspace')}</small></div><span class="badge">${badge}</span></section>`).join('')}</div><section class="card"><div class="section-heading"><h2>${translate('domains')}</h2>${button('navigate', 'domains', 'domains')}</div>${domainTable(recent.slice(0, 8))}</section>`;
+      content.innerHTML = `<section class="hero"><div><span class="eyebrow">A CLEAR VIEW OF YOUR DOMAINS</span><h2>${translate('greeting')}</h2><p>${translate('subtitle')}</p></div><div class="hero-orbit">◎</div></section><div class="metrics">${[['total', data.domains, 'ASSETS'], ['connected', data.connections, 'PROVIDERS'], ['expiring', data.expiring, '30 DAYS'], ['expired', data.expired || 0, 'EXPIRED'], ['autorenew', data.autoRenew || 0, 'RENEWAL']].map(([label, value, badge]) => `<section class="card metric"><div><span class="muted">${translate(label)}</span><strong>${value}</strong><small>${translate('workspace')}</small></div><span class="badge">${badge}</span></section>`).join('')}</div>${overviewDetails(data)}<section class="card"><div class="section-heading"><h2>${translate('domains')}</h2>${button('navigate', 'domains', 'domains')}${allowed('settings:write') ? button('sync-all', 'syncAll') : ''}</div>${domainTable(recent.slice(0, 8))}</section>`;
     } else if (currentPage === 'domains') {
       domains = data;
       content.innerHTML = `<section class="card"><div class="section-heading"><input id="search" class="search" aria-label="${translate('search')}" placeholder="${translate('search')}"><div class="actions">${select('expiry-filter', 'expiry', ['all', '30days', 'expired'], 'all')}${select('renew-filter', 'autorenew', ['all', 'yes', 'no'], 'all')}${select('domain-sort', 'sort', ['name', 'expiry'], 'name')}${button('export', 'export')}${button('export-csv', 'CSV')}${allowed('domain:write') ? button('import', 'import') : ''}</div></div><div id="domain-table">${domainTable(data)}</div></section>`;
@@ -137,7 +146,7 @@ async function loadPage() {
       const settings = await api('/settings');
       if (revision !== generation) return;
       workflowData.settings = settings;
-      content.innerHTML = `<section class="card"><div class="section-heading"><h2>${translate('current')}: ${escape(data.version)}</h2><span class="badge">Node.js + SQLite</span></div><p class="muted">${translate('updateHint')}</p><div class="actions">${allowed('settings:write') ? button('check-update', 'check', '', 'class="primary"') + button('safety-settings', 'safety') + button('create-contact', 'contact') : ''}<span id="update-result" role="status"></span></div><p class="muted">${translate('billingEnabled')}: ${translate(settings.safety.billingEnabled ? 'yes' : 'no')}</p><p class="muted">${translate('importLegacy')}</p></section>`;
+      content.innerHTML = `<section class="card"><div class="section-heading"><h2>${translate('current')}: ${escape(data.version)}</h2><span class="badge">Node.js + SQLite</span></div><p class="muted">${translate('updateHint')}</p><div class="actions">${button('system-status', 'systemStatus')}${button('test-connections', 'testConnections')}${allowed('settings:write') ? button('check-update', 'check', '', 'class="primary"') + button('safety-settings', 'safety') + button('create-contact', 'contact') : ''}<span id="update-result" role="status"></span></div><p class="muted">${translate('billingEnabled')}: ${translate(settings.safety.billingEnabled ? 'yes' : 'no')}</p><p class="muted">${translate('importLegacy')}</p></section>`;
     }
   } catch (error) { if (revision === generation && user) { document.querySelector('#page-content').textContent = error.message; notice(error.message); } }
 }
@@ -151,6 +160,7 @@ function addForm() {
   if (currentPage === 'accounts') modal('accounts', field('username', 'username') + field('realName', 'realName', '', 'text', false) + field('email', 'Email', '', 'email', false) + field('password', 'password', '', 'password') + select('role', 'role', ['viewer', 'admin'], 'viewer') + select('status', 'status', ['active', 'disabled'], 'active'), 'account');
 }
 function credentialFields() {
+  if (!document.querySelector('#credential-fields')) return;
   const provider = document.querySelector('[name="provider"]').value;
   const catalog = providerCatalog.find((item) => item.id === provider);
   const fields = catalog?.fields || (provider === 'cloudflare' ? ['token', 'accountId'] : ['apiKey', provider === 'porkbun' ? 'secretKey' : 'apiSecret']);
@@ -159,6 +169,15 @@ function credentialFields() {
 async function showDns(id) {
   const domain = domains.find((item) => item.id === id);
   if (!domain) return;
+  const zones = await api('/dns/zones');
+  const matches = zones.items.filter((zone) => zone.name.toLowerCase() === domain.name.toLowerCase());
+  workflowData.zones = zones.items;
+  if (matches.length === 1) { await workflowAction('zone-records', matches[0].id); return; }
+  if (matches.length > 1) {
+    document.querySelector('#dialog-body').innerHTML = `<h2>DNS · ${escape(domain.name)}</h2><div class="actions">${matches.map((zone) => button('zone-records', `${zone.connectionName} (${zone.provider})`, zone.id)).join('')}${button('close', 'close')}</div>`;
+    if (!dialog.open) dialog.showModal();
+    return;
+  }
   const records = await api(`/domains/${id}/dns`);
   const canWrite = allowed('dns:write');
   workflowData.records = records;
@@ -167,7 +186,7 @@ async function showDns(id) {
   if (!dialog.open) dialog.showModal();
 }
 document.addEventListener('input', (event) => { if (event.target.id === 'search') { filterDomains(); rememberPage(); } });
-document.addEventListener('change', (event) => { if (event.target.name === 'provider') credentialFields(); if (['expiry-filter', 'renew-filter', 'domain-sort'].includes(event.target.name)) { filterDomains(); rememberPage(); } });
+document.addEventListener('change', (event) => { if (event.target.name === 'provider') credentialFields(); if (event.target.name === 'channelType') channelInputs(); if (['expiry-filter', 'renew-filter', 'domain-sort'].includes(event.target.name)) { filterDomains(); rememberPage(); } });
 document.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]');
   if (!target) return;
@@ -234,13 +253,24 @@ function allowed(permission) {
 function jsonField(name, label, value = {}) {
   return `<label>${escape(translate(label))}<textarea name="${name}" spellcheck="false" required>${escape(JSON.stringify(value, null, 2))}</textarea></label>`;
 }
+function channelInputs() {
+  const type = document.querySelector('[name="channelType"]').value;
+  const channel = workflowData.notificationConfig.channels.find((entry) => entry.id === document.querySelector('#modal-form').dataset.id);
+  const original = channel?.type === type ? channel : null;
+  const fields = workflowData.notificationConfig.channelFields[type] || [];
+  document.querySelector('#channel-inputs').innerHTML = fields.map((name) => {
+    const secret = ['pass', 'botToken', 'webhook', 'secret', 'deviceKey', 'url', 'headers'].includes(name);
+    const label = `${name}${original?.configuredFields?.includes(name) && secret ? ` (${translate('configured')})` : ''}`;
+    return field(`config-${name}`, label, original?.config?.[name] || (!original && name === 'port' ? '465' : !original && name === 'server' ? 'https://api.day.app' : ''), secret ? 'password' : 'text', false);
+  }).join('');
+}
 
 function checkbox(name, label, checked = false) {
   return `<label class="checkbox"><input type="checkbox" name="${name}" ${checked ? 'checked' : ''}>${escape(translate(label))}</label>`;
 }
 
 function recordFields(record = {}) {
-  return `<div class="field-pair">${select('type', 'type', ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA'], record.type || 'A')}${field('name', 'recordName', record.name || '@')}</div>${field('content', 'content', record.content || '')}<div class="field-pair">${field('ttl', 'TTL', record.ttl || 600, 'number')}${field('priority', 'priority', record.priority || 0, 'number')}</div><div class="field-pair">${field('weight', 'SRV weight', record.weight || 0, 'number', false)}${field('port', 'SRV port', record.port || 0, 'number', false)}</div>${checkbox('proxied', 'Cloudflare proxy', record.proxied === true)}`;
+  return `<div class="field-pair">${select('type', 'type', ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA'], record.type || 'A')}${field('name', 'recordName', record.name || '@')}</div>${field('content', 'content', record.content || '')}<div class="field-pair">${field('ttl', 'TTL', record.ttl || 600, 'number')}${field('priority', 'priority', record.priority || 0, 'number')}</div><div class="field-pair">${field('weight', 'SRV weight', record.weight || record.data?.weight || 0, 'number', false)}${field('port', 'SRV port', record.port || record.data?.port || 0, 'number', false)}</div><div class="field-pair">${field('flag', 'CAA flags', record.flag || record.data?.flags || 0, 'number', false)}${field('tag', 'CAA tag', record.tag || record.data?.tag || 'issue', 'text', false)}</div>${field('comment', 'notes', record.comment || '', 'text', false)}${checkbox('proxied', 'Cloudflare proxy', record.proxied === true)}`;
 }
 
 function showResult(title, result) {
@@ -258,11 +288,11 @@ async function workflowPage(revision) {
   } else if (currentPage === 'orders') {
     const orders = await api('/orders');
     workflowData.orders = orders;
-    html = `<section class="card"><div class="actions">${allowed('payment:write') ? button('sync-orders', 'syncOrders') : ''}</div>${table(['date', 'name', 'type', 'status', 'price', 'actions'], orders.map((order) => [escape(order.created_at.slice(0, 19)), escape(order.domain), escape(order.kind), escape(order.status), escape(order.details.price ? `${order.details.price.amount} ${order.details.price.currency}` : '—'), button('order-detail', 'detail', order.id) + (allowed('payment:write') ? button('reconcile-order', 'reconcile', order.id) : '')]))}</section>`;
+    html = `<section class="card"><div class="actions">${allowed('payment:write') ? button('sync-orders', 'syncOrders') : ''}</div>${table(['date', 'name', 'type', 'status', 'price', 'actions'], orders.map((order) => [escape(order.created_at.slice(0, 19)), escape(order.domain), escape(order.kind), escape(order.status), escape(order.details.price ? `${order.details.price.amount} ${order.details.price.currency}` : '—'), button('order-detail', 'detail', order.id) + (allowed('payment:write') ? (order.operationId ? button('sync-order', 'syncOrder', order.id) : '') + button('reconcile-order', 'reconcile', order.id) : '')]))}</section>`;
   } else if (currentPage === 'finance') {
     const payments = await api('/payments');
     workflowData.payments = payments;
-    html = `<section class="card"><p class="notice">${translate('bookNote')}</p><div class="actions">${allowed('payment:write') ? button('add-payment', 'manual') + button('sync-payments', 'syncPayments') : ''}${button('read-invoices', 'invoices')}${button('read-balances', 'balances')}</div>${table(['name', 'type', 'content', 'actions'], payments.map((payment) => [escape(payment.name) + (payment.isDefault ? ' ★' : ''), escape(payment.type), escape(payment.last4 || ''), allowed('payment:write') ? button('edit-payment', 'edit', payment.id) + button('default-payment', 'default', payment.id) + button('delete-payment', 'remove', payment.id, 'class="danger"') : '—']))}</section>`;
+    html = `<section class="card"><p class="notice">${translate('bookNote')}</p><div class="actions">${allowed('payment:write') ? button('add-payment', 'manual') : ''}${button('sync-payments', 'syncPayments')}${button('read-invoices', 'invoices')}${button('read-balances', 'balances')}${button('payment-capabilities', 'capabilities')}</div>${table(['name', 'type', 'content', 'actions'], payments.map((payment) => [escape(payment.name) + (payment.isDefault ? ' ★' : ''), escape(payment.type), escape(payment.last4 || ''), allowed('payment:write') ? button('verify-payment', 'verifyPayment', payment.id) + button('edit-payment', 'edit', payment.id) + button('default-payment', 'default', payment.id) + button('delete-payment', 'remove', payment.id, 'class="danger"') : '—']))}</section>`;
   } else if (currentPage === 'notifications') {
     const config = await api('/notifications');
     workflowData.notificationConfig = config;
@@ -274,13 +304,13 @@ async function workflowPage(revision) {
   } else if (currentPage === 'providers') {
     const providers = await api('/providers');
     workflowData.providers = providers;
-    html = `<section class="card"><p class="notice">HTTPS JSON / XML · No scripts · Public endpoints only</p><div class="actions">${allowed('settings:write') ? button('add-provider', 'addProvider') : ''}</div>${table(['name', 'provider', 'actions'], providers.map((provider) => [escape(provider.name), escape(provider.id), !provider.builtin ? button('provider-detail', 'detail', provider.id) + (allowed('settings:write') ? button('delete-provider', 'remove', provider.id, 'class="danger"') : '') : '—']))}</section>`;
+    html = `<section class="card"><p class="notice">HTTPS JSON / XML · No scripts · Public endpoints only</p><div class="actions">${allowed('settings:write') ? button('add-provider', 'addProvider') : ''}</div>${table(['name', 'provider', 'actions'], providers.map((provider) => [escape(provider.name), escape(provider.id), provider.builtin ? button('builtin-provider-detail', 'detail', provider.id) : button('provider-detail', 'detail', provider.id) + (allowed('settings:write') && !provider.preset ? button('delete-provider', 'remove', provider.id, 'class="danger"') : '')]))}</section>`;
   } else if (currentPage === 'dns') {
     const zones = await api('/dns/zones');
     workflowData.zones = zones.items;
     html = `<section class="card">${zones.notes.length ? `<p class="notice">${escape(JSON.stringify(zones.notes))}</p>` : ''}${table(['name', 'provider', 'actions'], zones.items.map((zone) => [escape(zone.name), escape(zone.connectionName), button('zone-records', 'DNS', zone.id)]))}</section>`;
   } else {
-    html = `<section class="card"><form id="workflow-form" data-kind="lookup"><div class="field-pair">${field('domain', 'name')}${select('type', 'type', ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SOA', 'SRV', 'CAA'], 'A')}</div><button class="primary">${translate('lookup')}</button></form><pre id="lookup-results"></pre></section>`;
+    html = `<section class="card"><form id="workflow-form" data-kind="lookup"><div class="field-pair">${field('domain', 'name')}${select('type', 'type', ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SOA', 'SRV', 'CAA'], 'A')}</div>${field('server', 'resolver', '', 'text', false)}<button class="primary">${translate('lookup')}</button></form><pre id="lookup-results"></pre></section>`;
   }
   if (revision !== generation || !user) return true;
   const content = document.querySelector('#page-content');
@@ -291,11 +321,23 @@ async function workflowPage(revision) {
 
 async function purchaseForm(kind, name, connectionId, price, domainId = '', years = 1) {
   workflowData.purchase = { kind, domain: name, connectionId, price, domainId, years, requestId: crypto.randomUUID() };
-  modal(kind, `<p class="notice">${translate('betaWarning')}</p><p><strong>${escape(name)}</strong> · ${escape(price ? `${price.amount} ${price.currency}` : translate('unpriced'))} · ${translate('years')}: ${years}</p>${kind === 'transfer' ? field('authCode', 'authCode', '', 'password') : ''}${kind !== 'renew' ? field('registrant', 'registrant', workflowData.settings?.contacts?.registrant || '', 'text', false) + checkbox('autoRenew', 'autoRenew') : ''}${!price ? checkbox('acceptUnpriced', 'unpriced') : ''}`, 'purchase');
+  modal(kind, `<p class="notice">${translate('betaWarning')}</p><p><strong>${escape(name)}</strong> · ${escape(price ? `${price.amount} ${price.currency}` : translate('unpriced'))} · ${translate('years')}: ${years}</p>${kind === 'transfer' ? field('authCode', 'authCode', '', 'password') : ''}${kind !== 'renew' ? ['registrant', 'admin', 'tech', 'billing'].map((name) => field(`contact-${name}`, `${name}: ${translate('contactOptional')}`, workflowData.settings?.contacts?.[name] || '', 'text', false)).join('') + checkbox('autoRenew', 'autoRenew') + select('privacyLevel', 'privacy', ['high', 'public'], 'high') : ''}${field('paymentMethodId', 'Payment ID (optional bookkeeping)', '', 'text', false)}${!price ? checkbox('acceptUnpriced', 'unpriced') : ''}`, 'purchase');
 }
 
 async function workflowAction(action, id) {
-  if (action === 'manage-domain') {
+  if (action === 'sync-all') {
+    const results = [];
+    for (const bound of (await api('/connections')).filter((entry) => entry.enabled)) {
+      try { results.push({ name: bound.name, ...(await api(`/connections/${bound.id}/sync`, 'POST')) }); }
+      catch (error) { results.push({ name: bound.name, error: error.message }); }
+    }
+    await loadPage(); showResult('syncAll', results);
+  } else if (action === 'system-status' || action === 'test-connections' || action === 'payment-capabilities' || action === 'verify-payment') {
+    const routes = { 'system-status': ['/system/status', 'GET'], 'test-connections': ['/settings/test', 'POST'], 'payment-capabilities': ['/payments/capabilities', 'GET'], 'verify-payment': ['/payments/verify', 'POST'] };
+    showResult(translate(action === 'verify-payment' ? 'verifyPayment' : action === 'test-connections' ? 'testConnections' : action === 'payment-capabilities' ? 'capabilities' : 'systemStatus'), await api(...routes[action], action === 'verify-payment' ? { paymentMethodId: id } : undefined));
+  } else if (action === 'sync-order') { showResult('syncOrder', await api(`/orders/${id}/sync`, 'POST')); }
+  else if (action === 'builtin-provider-detail') { showResult('providers', workflowData.providers.find((entry) => entry.id === id)); }
+  else if (action === 'manage-domain') {
     const domain = domains.find((item) => item.id === id);
     workflowData.managed = domain;
     const actions = [button('domain-detail', 'detail'), ...(allowed('domain:billing') ? [button('renew-domain', 'renew')] : []), ...(allowed('domain:write') ? [button('domain-autorenew', 'autorenew'), button('domain-nameservers', 'nameservers')] : []), ...(allowed('transfer:write') ? [button('domain-auth-code', 'authCode'), button('domain-lock', 'transferLock')] : []), ...(domain.provider === 'cloudflare' && allowed('dns:write') ? [button('domain-purge', 'purge')] : [])];
@@ -318,7 +360,7 @@ async function workflowAction(action, id) {
     dialog.close();
     modal(action === 'domain-lock' ? 'transferLock' : 'autorenew', select('value', 'status', ['yes', 'no'], workflowData.managed.auto_renew ? 'yes' : 'no'), action);
   } else if (action === 'domain-nameservers') {
-    dialog.close(); modal('nameservers', field('hosts', 'nameservers', '', 'text'), action);
+    dialog.close(); modal('nameservers', (workflowData.managed.provider === 'spaceship' ? select('provider', 'nsMode', ['custom', 'basic'], 'custom') : '') + field('hosts', 'nameservers', '', 'text', false), action);
   } else if (action === 'domain-purge') {
     if (confirm(translate('purge') + '?')) { await api(`/domains/${workflowData.managed.id}/purge`, 'POST'); notice(translate('success')); }
   } else if (action === 'renew-domain') {
@@ -361,12 +403,12 @@ async function workflowAction(action, id) {
   } else if (action === 'add-role' || action === 'edit-role') {
     const role = workflowData.roles?.find((item) => item.id === id);
     const permissions = await api('/permissions');
-    modal('roles', field('name', 'name', role?.name || '') + field('permissions', 'permissions', role?.permissions.join(', ') || '') + `<small>${escape(permissions.join(', '))}</small>`, 'role');
+    modal('roles', field('name', 'name', role?.name || '') + `<fieldset><legend>${translate('permissionSelect')}</legend>${permissions.map((permission) => checkbox(`permission-${permission}`, permission, role?.permissions.includes(permission))).join('')}</fieldset>`, 'role');
     if (role) document.querySelector('#modal-form').dataset.id = id;
   } else if (action === 'assign-roles') {
     const roles = await api('/roles');
     const assigned = await api(`/accounts/${id}/roles`);
-    modal('assignRoles', field('roleIds', 'roleIds', assigned.join(', '), 'text', false) + `<pre>${escape(JSON.stringify(roles.filter((role) => !role.builtin).map((role) => ({ id: role.id, name: role.name })), null, 2))}</pre>`, 'assign-roles');
+    modal('assignRoles', checkbox('inheritViewer', 'inheritViewer', accounts.find((account) => account.id === id)?.inheritViewer !== false) + `<fieldset><legend>${translate('roleSelect')}</legend>${roles.filter((role) => !role.builtin).map((role) => checkbox(`role-${role.id}`, role.name, assigned.includes(role.id))).join('')}</fieldset>`, 'assign-roles');
     document.querySelector('#modal-form').dataset.id = id;
   } else if (action === 'delete-role' || action === 'delete-account' || action === 'delete-provider' || action === 'delete-payment') {
     const routes = { 'delete-role': 'roles', 'delete-account': 'accounts', 'delete-provider': 'providers/custom', 'delete-payment': 'payments' };
@@ -394,9 +436,9 @@ async function workflowAction(action, id) {
   } else if (action === 'add-channel' || action === 'edit-channel') {
     const config = workflowData.notificationConfig;
     const channel = config.channels.find((item) => item.id === id);
-    const examples = { email: { host: '', port: '465', user: '', pass: '', from: '', to: '' }, webhook: { url: 'https://example.com/hooks/domain', headers: '{}' }, telegram: { botToken: '', chatId: '' }, wecom: { webhook: '' }, feishu: { webhook: '' }, dingtalk: { webhook: '', secret: '' }, bark: { server: 'https://api.day.app', deviceKey: '', group: 'DomainDeck' } };
-    modal('channel', field('name', 'name', channel?.name || '') + select('channelType', 'type', config.channelTypes, channel?.type || 'webhook') + checkbox('enabled', 'enabled', channel?.enabled !== false) + jsonField('configuration', 'configuration', channel ? {} : examples.webhook) + `<pre>${escape(JSON.stringify(config.channelFields, null, 2))}</pre>`, 'notification-channel');
+    modal('channel', field('name', 'name', channel?.name || '') + select('channelType', 'type', config.channelTypes, channel?.type || 'webhook') + checkbox('enabled', 'enabled', channel?.enabled !== false) + '<div id="channel-inputs"></div>', 'notification-channel');
     if (channel) document.querySelector('#modal-form').dataset.id = id;
+    channelInputs();
   } else if (action === 'delete-channel') {
     if (confirm(translate('confirmDelete'))) { const config = workflowData.notificationConfig; await api('/notifications', 'PUT', { ...config, channels: config.channels.filter((item) => item.id !== id) }); await loadPage(); }
   } else if (['test-channels', 'test-channel', 'run-notifications', 'notification-log'].includes(action)) {
@@ -432,13 +474,13 @@ async function workflowSubmit(kind, values, form) {
     return true;
   }
   if (kind === 'lookup') {
-    const result = await api(`/lookup?domain=${encodeURIComponent(values.domain)}&type=${values.type}`);
+    const result = await api(`/lookup?domain=${encodeURIComponent(values.domain)}&type=${values.type}&server=${encodeURIComponent(values.server || '')}`);
     document.querySelector('#lookup-results').textContent = JSON.stringify(result, null, 2); return true;
   }
   if (kind === 'purchase') {
     if (!confirm(translate('betaWarning'))) return true;
     const purchase = workflowData.purchase;
-    const body = { domain: purchase.domain, connectionId: purchase.connectionId, requestId: purchase.requestId, years: purchase.years, expectedPrice: purchase.price, acceptUnpriced: values.acceptUnpriced === 'on', confirm: true, autoRenew: values.autoRenew === 'on', contacts: values.registrant ? { registrant: values.registrant } : undefined, authCode: values.authCode };
+    const body = { domain: purchase.domain, connectionId: purchase.connectionId, requestId: purchase.requestId, years: purchase.years, expectedPrice: purchase.price, acceptUnpriced: values.acceptUnpriced === 'on', confirm: true, autoRenew: values.autoRenew === 'on', contacts: Object.fromEntries(['registrant', 'admin', 'tech', 'billing'].filter((name) => values[`contact-${name}`]).map((name) => [name, values[`contact-${name}`]])), authCode: values.authCode, privacyLevel: values.privacyLevel, paymentMethodId: values.paymentMethodId };
     const result = await api(purchase.kind === 'renew' ? `/domains/${purchase.domainId}/renew` : `/${purchase.kind}`, 'POST', body);
     dialog.close(); showResult('orders', result); return true;
   }
@@ -448,8 +490,8 @@ async function workflowSubmit(kind, values, form) {
     await api(`/connections/${form.dataset.id}`, 'PUT', { name: values.name, credentials, enabled: values.enabled === 'on', isDefault: values.isDefault === 'on' });
   } else if (kind === 'safety') await api('/settings', 'PUT', { safety: { billingEnabled: values.billingEnabled === 'on' }, contacts: Object.fromEntries(['registrant', 'admin', 'tech', 'billing'].map((name) => [name, values[name]])) });
   else if (kind === 'contact') { const result = await api('/contacts', 'POST', { connectionId: values.connectionId, contact: JSON.parse(values.contact) }); dialog.close(); showResult('contact', result); return true; }
-  else if (kind === 'role') await api(form.dataset.id ? `/roles/${form.dataset.id}` : '/roles', form.dataset.id ? 'PUT' : 'POST', { name: values.name, permissions: values.permissions.split(',').map((value) => value.trim()).filter(Boolean) });
-  else if (kind === 'assign-roles') await api(`/accounts/${form.dataset.id}/roles`, 'PUT', { roleIds: values.roleIds.split(',').map((value) => value.trim()).filter(Boolean) });
+  else if (kind === 'role') await api(form.dataset.id ? `/roles/${form.dataset.id}` : '/roles', form.dataset.id ? 'PUT' : 'POST', { name: values.name, permissions: Object.keys(values).filter((name) => name.startsWith('permission-')).map((name) => name.slice(11)) });
+  else if (kind === 'assign-roles') await api(`/accounts/${form.dataset.id}/roles`, 'PUT', { roleIds: Object.keys(values).filter((name) => name.startsWith('role-')).map((name) => name.slice(5)), inheritViewer: values.inheritViewer === 'on' });
   else if (kind === 'provider') {
     const manifest = JSON.parse(values.manifest);
     await api('/providers/custom/validate', 'POST', { manifest });
@@ -459,10 +501,10 @@ async function workflowSubmit(kind, values, form) {
   else if (kind === 'notification-rules') await api('/notifications', 'PUT', { enabled: values.enabled === 'on', expiryDays: values.expiryDays.split(',').map((value) => Number(value.trim())), notifyOnRenew: values.notifyOnRenew === 'on' });
   else if (kind === 'notification-channel') {
     const config = workflowData.notificationConfig;
-    const candidate = { id: form.dataset.id, name: values.name, type: values.channelType, enabled: values.enabled === 'on', config: JSON.parse(values.configuration) };
+    const candidate = { id: form.dataset.id, name: values.name, type: values.channelType, enabled: values.enabled === 'on', config: Object.fromEntries(Object.entries(values).filter(([name, value]) => name.startsWith('config-') && value).map(([name, value]) => [name.slice(7), value])) };
     await api('/notifications', 'PUT', { ...config, channels: [...config.channels.filter((item) => item.id !== candidate.id), candidate] });
   } else if (kind === 'domain-autorenew' || kind === 'domain-lock') await api(`/domains/${workflowData.managed.id}/${kind === 'domain-lock' ? 'transfer-lock' : 'autorenew'}`, 'PUT', kind === 'domain-lock' ? { isLocked: values.value === 'yes' } : { isEnabled: values.value === 'yes' });
-  else if (kind === 'domain-nameservers') await api(`/domains/${workflowData.managed.id}/nameservers`, 'PUT', { hosts: values.hosts.split(/[\s,]+/).filter(Boolean) });
+  else if (kind === 'domain-nameservers') await api(`/domains/${workflowData.managed.id}/nameservers`, 'PUT', { provider: values.provider || 'custom', hosts: values.hosts.split(/[\s,]+/).filter(Boolean) });
   else if (kind === 'dns-edit') await api(`/domains/${workflowData.recordDomain.id}/dns/${form.dataset.id}`, 'PATCH', { ...values, proxied: values.proxied === 'on' });
   else if (kind === 'zone-edit') { await api(`/dns/zones/${encodeURIComponent(workflowData.zoneId)}/records/${form.dataset.id}`, 'PATCH', { ...values, proxied: values.proxied === 'on' }); await workflowAction('zone-records', workflowData.zoneId); return true; }
   else if (kind === 'zone-dns') { await api(`/dns/zones/${encodeURIComponent(workflowData.zoneId)}/records`, 'POST', { ...values, proxied: values.proxied === 'on' }); await workflowAction('zone-records', workflowData.zoneId); return true; }

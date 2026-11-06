@@ -4,9 +4,9 @@ import { connection } from './store.js';
 import { requireValue } from './errors.js';
 
 export const builtins = [
-  { id: 'porkbun', name: 'Porkbun', docs: 'https://porkbun.com/api/json/v3/documentation', fields: ['apiKey', 'secretKey'], capabilities: ['domains', 'dns', 'register', 'renew', 'transfer', 'nameservers', 'autorenew', 'invoices', 'balance'] },
-  { id: 'spaceship', name: 'Spaceship', docs: 'https://docs.spaceship.dev/', fields: ['apiKey', 'apiSecret'], capabilities: ['domains', 'dns', 'register', 'renew', 'transfer', 'nameservers', 'autorenew', 'authCode', 'transferLock', 'operations', 'contacts'] },
-  { id: 'cloudflare', name: 'Cloudflare', docs: 'https://developers.cloudflare.com/api/', fields: ['token', 'accountId'], capabilities: ['domains', 'dns', 'registrations', 'autorenew', 'transferLock', 'purge', 'invoices', 'payments'] },
+  { id: 'porkbun', name: 'Porkbun', docs: 'https://porkbun.com/api/json/v3/documentation', credentialsUrl: 'https://porkbun.com/account/api', setup: ['Create API key and secret.', 'Enable API access for each managed domain.'], fields: ['apiKey', 'secretKey'], capabilities: ['domains', 'dns', 'register', 'renew', 'transfer', 'nameservers', 'autorenew', 'invoices', 'balance'] },
+  { id: 'spaceship', name: 'Spaceship', docs: 'https://docs.spaceship.dev/', credentialsUrl: 'https://www.spaceship.com/application/api-manager/', setup: ['Create an API key and secret in API Manager.', 'Grant domains:read, dnsrecords:read, and only the write/billing/transfer scopes you need.', 'Grant contacts:write and asyncoperations:read for contacts and asynchronous purchases.'], fields: ['apiKey', 'apiSecret'], capabilities: ['domains', 'dns', 'register', 'renew', 'transfer', 'nameservers', 'autorenew', 'authCode', 'transferLock', 'operations', 'contacts'] },
+  { id: 'cloudflare', name: 'Cloudflare', docs: 'https://developers.cloudflare.com/api/', credentialsUrl: 'https://dash.cloudflare.com/profile/api-tokens', setup: ['Create a scoped API token.', 'Copy the account ID; grant Zone/DNS and optional Registrar/Billing permissions.'], fields: ['token', 'accountId'], capabilities: ['domains', 'dns', 'registrations', 'autorenew', 'transferLock', 'purge', 'invoices', 'payments'] },
 ];
 
 export const presets = [
@@ -39,7 +39,7 @@ export const presets = [
 export function providerList(database) {
   const custom = database.prepare('SELECT manifest_json FROM provider_manifests ORDER BY id').all().map((row) => JSON.parse(row.manifest_json));
   const overridden = new Set(custom.map((item) => item.id));
-  return [...builtins, ...presets.filter((item) => !overridden.has(item.id)), ...custom].map((item) => ({ id: item.id, name: item.name, docs: item.docs || '', builtin: builtins.some((entry) => entry.id === item.id), fields: item.fields, capabilities: Array.isArray(item.capabilities) ? item.capabilities : Object.keys(item.ops || {}) }));
+  return [...builtins, ...presets.filter((item) => !overridden.has(item.id)), ...custom].map((item) => ({ id: item.id, name: item.name, docs: item.docs || '', hint: item.hint || '', setup: item.setup || [], credentialsUrl: item.credentialsUrl || '', builtin: builtins.some((entry) => entry.id === item.id), preset: presets.some((entry) => entry.id === item.id) && !overridden.has(item.id), fields: item.fields, capabilities: Array.isArray(item.capabilities) ? item.capabilities : Object.keys(item.ops || {}).filter((operation) => item.capabilities?.[operation] !== false) }));
 }
 
 export function manifestFor(database, id) {
