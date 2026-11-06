@@ -1,0 +1,114 @@
+name: Test, build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v3.*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare pinned Node 24 toolchain
+        run: docker pull node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553
+      - name: Isolated tests, syntax checks and packaging
+        run: |
+          mkdir -p "$RUNNER_TEMP/domaindeck-scratch"
+          sudo mount -t tmpfs -o size=128m,mode=1777 tmpfs "$RUNNER_TEMP/domaindeck-scratch"
+          docker run --rm --pull=never --network none --read-only \
+            --user 65534:65534 --cpus 2 --memory 512m --pids-limit 80 \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --ulimit nofile=128:128 --ulimit fsize=16777216:16777216 \
+            --tmpfs /dev/shm:ro,size=1m \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/src,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/domaindeck-scratch,dst=/scratch" \
+            --workdir /src --entrypoint /usr/bin/env \
+            node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 \
+            -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/scratch TMPDIR=/scratch \
+            /usr/bin/timeout 120s /bin/sh -ec '
+              for file in src/*.js public/app.js scripts/*.js; do node --check "$file"; done
+              bash -n deploy/install.sh
+              node --test
+              node scripts/build.js /scratch/out
+              cd /scratch/out
+              sha256sum -c SHA256SUMS.txt
+            '
+          python3 - <<'PY'
+          import os, stat, pathlib, hashlib
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'domaindeck-scratch' / 'out'
+          destination = pathlib.Path('release-output')
+          destination.mkdir()
+          for name in ['DomainDeck-node.bundle.json', 'DomainDeck-node-linux.tar.gz', 'SHA256SUMS.txt']:
+              descriptor = os.open(root / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+              try:
+                  info = os.fstat(descriptor)
+                  assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size < 4 * 1024 * 1024
+                  data = os.read(descriptor, info.st_size + 1)
+                  after = os.fstat(descriptor)
+                  assert len(data) == info.st_size and (after.st_ino, after.st_size, after.st_mtime_ns) == (info.st_ino, info.st_size, info.st_mtime_ns)
+                  (destination / name).write_bytes(data)
+              finally:
+                  os.close(descriptor)
+          for line in (destination / 'SHA256SUMS.txt').read_text().splitlines():
+              digest, name = line.split('  ')
+              assert name in ['DomainDeck-node.bundle.json', 'DomainDeck-node-linux.tar.gz']
+              assert hashlib.sha256((destination / name).read_bytes()).hexdigest() == digest
+          PY
+      - name: Remove isolated scratch filesystem
+        if: always()
+        run: sudo umount "$RUNNER_TEMP/domaindeck-scratch" || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: package-${{ matrix.runner }}
+          path: release-output/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v3.')
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: package-*
+          path: artifacts
+      - name: Validate packages and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = "v$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+          diff -r artifacts/package-ubuntu-24.04 artifacts/package-ubuntu-24.04-arm
+          cd artifacts/package-ubuntu-24.04
+          sha256sum -c SHA256SUMS.txt
+          cd ../..
+          flags=()
+          if [[ "$RELEASE_TAG" == *-beta.* ]]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" artifacts/package-ubuntu-24.04/* \
+            --verify-tag --repo "$GITHUB_REPOSITORY" --title "DomainDeck $RELEASE_TAG" \
+            --notes-file docs/RELEASE.md "${flags[@]}"

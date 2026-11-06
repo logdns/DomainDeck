@@ -1,0 +1,22 @@
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { validateBundle } from '../src/update.js';
+
+const root = fileURLToPath(new URL('..', import.meta.url));
+const output = resolve(process.argv[2] || join(root, 'dist'));
+if (existsSync(output)) throw new Error('Output must be a new directory');
+mkdirSync(output, { recursive: true });
+const { version } = JSON.parse(readFileSync(join(root, 'package.json')));
+const files = ['package.json', ...['src', 'public'].flatMap((directory) => readdirSync(join(root, directory)).sort().map((name) => `${directory}/${name}`))];
+const bundle = validateBundle({ version, files: files.map((path) => ({ path, content: readFileSync(join(root, path), 'utf8') })) });
+writeFileSync(join(output, 'DomainDeck-node.bundle.json'), JSON.stringify(bundle));
+const stage = join(output, 'stage');
+mkdirSync(stage);
+for (const path of ['src', 'public', 'package.json', 'README.md', 'docs', 'deploy']) cpSync(join(root, path), join(stage, path), { recursive: true });
+execFileSync('tar', ['--sort=name', '--mtime=@0', '--owner=0', '--group=0', '--numeric-owner', '--format=ustar', '-czf', join(output, 'DomainDeck-node-linux.tar.gz'), '-C', stage, '.'], { env: { PATH: process.env.PATH, COPYFILE_DISABLE: '1' } });
+const names = ['DomainDeck-node.bundle.json', 'DomainDeck-node-linux.tar.gz'];
+writeFileSync(join(output, 'SHA256SUMS.txt'), names.map((name) => `${createHash('sha256').update(readFileSync(join(output, name))).digest('hex')}  ${name}\n`).join(''));
+console.log(`Built DomainDeck ${version}`);

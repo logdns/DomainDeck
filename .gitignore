@@ -1,0 +1,10 @@
+data-node/
+data/
+dist/
+node_modules/
+.env
+.env.*
+*.sqlite*
+vault.key
+initial-admin-password
+.DS_Store
