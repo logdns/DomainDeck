@@ -64,7 +64,7 @@ docker run --rm --pull=never --network none --read-only --user 65534:65534 \
   --ulimit fsize=16777216:16777216 \
   --tmpfs /scratch:rw,exec,nosuid,nodev,size=128m,mode=1777 \
   --tmpfs /dev/shm:ro,size=1m \
-  --mount "type=bind,src=$(pwd)/node,dst=/src,readonly" \
+  --mount "type=bind,src=$(pwd),dst=/src,readonly" \
   --workdir /src --entrypoint /usr/bin/env node:24-bookworm-slim \
   -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/scratch TMPDIR=/scratch \
   /usr/bin/timeout 90s /usr/local/bin/node --test
