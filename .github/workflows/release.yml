@@ -52,11 +52,13 @@ jobs:
             '
           python3 - <<'PY'
           import os, stat, pathlib, hashlib
-          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'domaindeck-scratch' / 'out'
+          scratch = pathlib.Path(os.environ['RUNNER_TEMP']) / 'domaindeck-scratch'
+          scratch_descriptor = os.open(scratch, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+          output_descriptor = os.open('out', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=scratch_descriptor)
           destination = pathlib.Path('release-output')
           destination.mkdir()
           for name in ['DomainDeck-node.bundle.json', 'DomainDeck-node-linux.tar.gz', 'SHA256SUMS.txt']:
-              descriptor = os.open(root / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+              descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=output_descriptor)
               try:
                   info = os.fstat(descriptor)
                   assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size < 4 * 1024 * 1024
@@ -66,6 +68,8 @@ jobs:
                   (destination / name).write_bytes(data)
               finally:
                   os.close(descriptor)
+          os.close(output_descriptor)
+          os.close(scratch_descriptor)
           for line in (destination / 'SHA256SUMS.txt').read_text().splitlines():
               digest, name = line.split('  ')
               assert name in ['DomainDeck-node.bundle.json', 'DomainDeck-node-linux.tar.gz']
