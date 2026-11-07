@@ -15,7 +15,7 @@ async function fixture(callback) {
   await createAccount(database, { username: 'viewer', password: 'fixture-password', role: 'viewer' });
   database.prepare("UPDATE users SET role='viewer' WHERE username='viewer'").run();
   seedDemo(database, key);
-  const server = createApp(database, { key, transport: demoTransport, version: '3.0.0-beta.6' });
+  const server = createApp(database, { key, transport: demoTransport, notificationTransport: async () => Response.json({ ok: true }), version: '3.0.0-beta.6' });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -112,4 +112,23 @@ test('Vben viewer cannot see or mutate finance, account, registrar credentials o
   for (const path of ['/accounts', '/roles', '/connections', '/providers', '/payments', '/settings', '/notifications', '/audit']) assert.equal((await call(path, token)).status, 403, path);
   assert.equal((await call('/register', token, { domain: 'example.com', confirm: true })).status, 403);
   assert.equal((await call('/settings', token, { safety: { billingEnabled: true } }, 'PUT')).status, 403);
+}));
+
+test('Vben order reconciliation and notification test report the actual persisted outcome', () => fixture(async ({ database, call, login }) => {
+  const token = await login('admin');
+  const now = new Date().toISOString();
+  database.prepare('INSERT INTO orders(id,domain,kind,status,details_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('fixture-order', 'example.test', 'renew', 'pending', JSON.stringify({ years: 1, price: { amount: '12.00', currency: 'USD' } }), now, now);
+  assert.equal((await call('/orders', token)).data.items[0].status, 'submitted');
+  assert.equal((await call('/orders/fixture-order', token, { status: 'succeeded' }, 'PUT')).status, 200);
+  assert.equal(database.prepare('SELECT status FROM orders').get().status, 'completed');
+  const saved = await call('/notifications', token, { enabled: true, rules: { expiryDays: [7], notifyOnRenew: true }, channels: [{ type: 'webhook', name: 'Fixture', config: { url: 'https://hooks.example.test/fixture' } }] }, 'PUT');
+  assert.equal(saved.status, 200);
+  const channel = (await call('/notifications', token)).data.channels[0];
+  const result = await call('/notifications/test', token, { channelId: channel.id });
+  assert.equal(result.status, 200);
+  assert.equal(result.data.ok, true);
+  assert.equal(result.data.results[0].ok, true);
+  assert.equal((await call('/notifications/log', token)).data.items[0].ok, 1);
+  assert.equal((await call('/notifications', token, { enabled: true, rules: { expiryDays: [14] } }, 'PUT')).status, 200);
+  assert.equal((await call('/notifications', token)).data.rules.notifyOnRenew, true);
 }));

@@ -90,6 +90,11 @@ try {
   assert.equal(database.prepare('SELECT name FROM payments').get().name, 'Browser payment fixture');
   await page.reload();
   await page.getByText('Browser payment fixture', { exact: true }).first().waitFor();
+  await page.getByRole('button', { name: /本地订单/ }).click();
+  const orderRow = page.getByRole('row').filter({ hasText: 'purchase-fixture.example' });
+  await orderRow.getByRole('button', { name: /^同\s*步$/ }).click();
+  await orderRow.getByText('已完成', { exact: true }).waitFor();
+  assert.equal(database.prepare('SELECT status FROM orders').get().status, 'completed');
   await visit('/dns');
   await page.screenshot({ path: join(output, 'dns.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -106,7 +111,7 @@ try {
   await page.waitForURL('**/#/access-denied');
   assert.deepEqual(errors, [], 'Browser runtime errors');
   assert.deepEqual(failures, [], 'Unexpected HTTP failures');
-  writeFileSync(join(output, 'result.json'), JSON.stringify({ ok: true, pages: 11, checks: ['login', 'menu-permissions', 'all-pages', 'asset-persistence', 'purchase-cancel', 'purchase-confirm', 'registrar-sync', 'payment-persistence', 'mobile', 'viewer-route-guard'], errors, failures }, null, 2));
+  writeFileSync(join(output, 'result.json'), JSON.stringify({ ok: true, pages: 11, checks: ['login', 'menu-permissions', 'all-pages', 'asset-persistence', 'purchase-cancel', 'purchase-confirm', 'order-sync', 'registrar-sync', 'payment-persistence', 'mobile', 'viewer-route-guard'], errors, failures }, null, 2));
   console.log('Vben + Node + SQLite browser integration passed');
 } catch (error) {
   console.error(JSON.stringify({ message: error.message, url: page.url(), text: (await page.locator('body').textContent()).slice(0, 1800), errors, failures }));

@@ -104,6 +104,7 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 const ORDER_STATUS: Record<string, { color: string; text: string }> = {
+  'needs-review': { color: 'orange', text: '结果不明，待核对' },
   submitted: { color: 'blue', text: '已提交' },
   succeeded: { color: 'green', text: '已完成' },
   failed: { color: 'red', text: '失败' },
@@ -1058,7 +1059,7 @@ const invoiceColumns = [
         </div>
 
         <div
-          v-if="canWrite && orderDetail.status === 'submitted'"
+          v-if="canWrite && ['submitted', 'needs-review'].includes(orderDetail.status)"
           class="mt-3 flex items-center justify-between"
         >
           <span class="text-xs text-slate-400"

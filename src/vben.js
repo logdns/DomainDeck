@@ -7,6 +7,7 @@ import { adapterFor } from './registry.js';
 
 const collection = (items) => ({ items, total: items.length });
 const roleCode = (id) => id === 'admin' ? 'super' : id;
+const orderStatus = (status) => ({ completed: 'succeeded', pending: 'submitted', submitting: 'submitted' }[status] || status);
 
 function availabilityResult(value, provider) {
   const result = value?.result ?? value?.available ?? value;
@@ -115,7 +116,8 @@ export async function vbenResource(database, context) {
   }
   if (/^\/api\/v1\/payments(?:\/[^/]+)?$/.test(path) && ['POST', 'PUT'].includes(method)) body = { ...body, notes: body.notes ?? body.note, last4: body.last4 ?? body.account };
   if (path === '/api/v1/payment-types' && method === 'GET') return (await invoke(path)).map((type) => ({ id: type, type, label: type, name: type }));
-  if (path === '/api/v1/orders' && method === 'GET') return collection((await invoke(path)).filter((order) => !query.get('domain') || order.domain.includes(query.get('domain'))).map((order) => ({ ...order, ...order.details, ...order.details.price, action: order.kind, createdAt: order.created_at, updatedAt: order.updated_at })));
+  if (path === '/api/v1/orders' && method === 'GET') return collection((await invoke(path)).filter((order) => !query.get('domain') || order.domain.includes(query.get('domain'))).map((order) => ({ ...order, ...order.details, ...order.details.price, status: orderStatus(order.status), registrar: database.prepare('SELECT name FROM connections WHERE id=?').get(order.connectionId)?.name || '', paymentName: database.prepare('SELECT name FROM payments WHERE id=?').get(order.details.paymentMethodId || '')?.name || '', action: order.kind, createdAt: order.created_at, updatedAt: order.updated_at })));
+  if (/^\/api\/v1\/orders\/[^/]+$/.test(path) && ['PUT', 'PATCH'].includes(method)) body = { ...body, status: body.status === 'succeeded' ? 'completed' : body.status };
   if (path === '/api/v1/audit' && method === 'GET') return collection((await invoke(path)).map((row) => ({ ...row, ts: row.created_at, status: 'ok', summary: row.target })));
   if (path === '/api/v1/notifications' && method === 'GET') {
     const result = await invoke(path);
@@ -145,6 +147,7 @@ export async function vbenResource(database, context) {
     }
   }
   const result = await invoke(path, method, body);
+  if (/^\/api\/v1\/orders(?:\/[^/]+)?\/sync$/.test(path) && method === 'POST') return { ...result, updated: result.results.filter((item) => item.ok).map((item) => ({ ...item, status: orderStatus(item.status) })), notes: result.results.filter((item) => !item.ok).map((item) => ({ ...item, domain: item.id })) };
   if (['/api/v1/payments/capabilities', '/api/v1/payments/probe'].includes(path)) return { ...result, connections: database.prepare('SELECT id,name,COALESCE(NULLIF(provider_ref,\'\'),provider) AS provider,enabled FROM connections').all(), providers: result.providers.map((item) => ({ ...item, id: item.provider, name: providers.find((provider) => provider.id === item.provider)?.name || item.provider, notes: { evidence: [item.note] } })), note: '仅使用已公开的官方接口；未开放的账单能力不会试探其他端点' };
   if (path === '/api/v1/payments/verify') return { ...result, name: result.payment.name, message: result.note };
   if (path === '/api/v1/accounts/balances') return { ...result, items: result.items.map((item) => ({ ...item, balance: { amount: item.amount, currency: item.currency, display: item.display }, payments: false, invoices: true })) };
