@@ -26,6 +26,9 @@ test('installer check accepts Node 24 with SQLite, handles spaces and rejects ex
     assert.notEqual(rejected.status, 0);
     assert.match(rejected.stderr, /Specified Node cannot run Node.js 24/);
     assert.equal(existsSync(join(directory, 'data')), false);
+    const invalidOrigin = spawnSync('bash', [installer, '--check', '--node', selected, '--public-origin', 'https://example.com/path'], { env: environment(directory), encoding: 'utf8', timeout: 5000 });
+    assert.notEqual(invalidOrigin.status, 0);
+    assert.match(invalidOrigin.stderr, /Invalid --public-origin/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -66,7 +69,7 @@ test('runtime downloader uses pinned HTTPS release and never extracts a mismatch
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('staged installer copies a private runtime, preserves data, configures the unit and checks a running app', () => {
+test('staged installer preserves data and proxy origin across reinstall and checks a running app', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'domaindeck-install-'));
   const tools = join(directory, 'tools');
   const app = join(directory, 'app');
@@ -86,9 +89,14 @@ test('staged installer copies a private runtime, preserves data, configures the 
   executable(join(tools, 'systemctl'), `
     case "$1" in
       restart)
+        if [[ -f "${pidFile}" ]]; then kill "$(cat "${pidFile}")" 2>/dev/null || true; sleep 0.1; fi
         envs=(); command=()
         while IFS= read -r line; do
-          case "$line" in Environment=*) envs+=("\${line#Environment=}") ;; ExecStart=*) read -r -a command <<< "\${line#ExecStart=}" ;; esac
+          case "$line" in
+            Environment=*) envs+=("\${line#Environment=}") ;;
+            EnvironmentFile=*) file="\${line#EnvironmentFile=-}"; if [[ -f "$file" ]]; then while IFS= read -r entry; do envs+=("$entry"); done < "$file"; fi ;;
+            ExecStart=*) read -r -a command <<< "\${line#ExecStart=}" ;;
+          esac
         done < "${system}/domaindeck-node.service"
         /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="${directory}" TMPDIR="${directory}" "\${envs[@]}" "\${command[@]}" > "${directory}/app.log" 2>&1 &
         echo $! > "${pidFile}"
@@ -98,13 +106,14 @@ test('staged installer copies a private runtime, preserves data, configures the 
   const source = readFileSync(installer, 'utf8')
     .replace('APP_ROOT=/opt/domaindeck-node', `APP_ROOT=${app}`)
     .replace('DATA_ROOT=/var/lib/domaindeck-node', `DATA_ROOT=${data}`)
+    .replace('ENV_FILE=/etc/domaindeck-node.env', `ENV_FILE=${directory}/environment`)
     .replace('SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"', `SOURCE_ROOT="${fileURLToPath(new URL('..', import.meta.url))}"`)
     .replaceAll('/run/systemd/system', system)
     .replaceAll('/etc/systemd/system', system);
   const staged = join(directory, 'install.sh');
   writeFileSync(staged, source);
   try {
-    const result = spawnSync('bash', [staged, '--node', selected, '--no-download'], { env: environment(directory), encoding: 'utf8', timeout: 30000 });
+    const result = spawnSync('bash', [staged, '--node', selected, '--no-download', '--public-origin', 'https://deck.example.test'], { env: environment(directory), encoding: 'utf8', timeout: 30000 });
     assert.equal(result.status, 0, `${result.stderr}\n${existsSync(join(directory, 'app.log')) ? readFileSync(join(directory, 'app.log'), 'utf8') : ''}`);
     assert.match(result.stdout, /Service health check passed/);
     assert.equal(readFileSync(join(data, 'preserve.txt'), 'utf8'), 'existing-data');
@@ -113,6 +122,18 @@ test('staged installer copies a private runtime, preserves data, configures the 
     assert.ok(unit.includes(`ExecStart=${app}/runtime/node ${app}/current/src/cli.js --auto-port=false`));
     assert.match(unit, /User=domaindeck-node/);
     assert.ok(existsSync(join(data, 'domaindeck.sqlite')));
+    const checkLogin = async () => {
+      const response = await fetch('http://127.0.0.1:4781/api/v1/auth/login', { method: 'POST', headers: { Origin: 'https://deck.example.test', Connection: 'close' }, body: JSON.stringify({ username: 'admin', password: readFileSync(join(data, 'initial-admin-password'), 'utf8').trim() }) });
+      assert.equal(response.status, 200, await response.text());
+      assert.equal((await fetch('http://127.0.0.1:4781/api/v1/auth/login', { method: 'POST', headers: { Origin: 'https://evil.example.test', Connection: 'close' }, body: '{}' })).status, 403);
+    };
+    await checkLogin();
+    const originalConfig = readFileSync(join(directory, 'environment'), 'utf8');
+    const reinstalled = spawnSync('bash', [staged, '--node', selected, '--no-download'], { env: environment(directory), encoding: 'utf8', timeout: 30000 });
+    assert.equal(reinstalled.status, 0, reinstalled.stderr);
+    assert.equal(readFileSync(join(directory, 'environment'), 'utf8'), originalConfig);
+    assert.equal(readFileSync(join(data, 'preserve.txt'), 'utf8'), 'existing-data');
+    await checkLogin();
   } finally {
     if (existsSync(pidFile)) { try { process.kill(Number(readFileSync(pidFile, 'utf8').trim()), 'SIGTERM'); } catch {} }
     rmSync(directory, { recursive: true, force: true });

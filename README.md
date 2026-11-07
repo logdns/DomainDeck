@@ -2,7 +2,7 @@
 
 独立重构的 **Node.js 24 + SQLite** 域名工作台。无 npm 运行依赖、无需前端编译，包含蓝色品牌、大字体、响应式布局、中英文和深色模式。
 
-这是 `3.0.0-beta.4` 公开测试版，迁入旧版账户与角色、域名交易、DNS、支付台账、通知、自定义注册商和离线数据迁移。本版修复安装器遇到旧 Node 时直接退出的问题，自动准备独立 Node 24 运行时。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
+这是 `3.0.0-beta.5` 公开测试版，迁入旧版账户与角色、域名交易、DNS、支付台账、通知、自定义注册商和离线数据迁移。本版增加明确的公开站点地址配置，解决宝塔 / Nginx 改写 Host 后登录被拒绝的问题，保留跨站保护与独立 Node 24 安装流程。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
 
 ## 功能
 
@@ -29,7 +29,7 @@ npm start
 
 访问 `http://127.0.0.1:4780`。初始用户名为 `admin`，从 `data-node/initial-admin-password` 读取随机密码。登录后在「账户权限」修改密码，密码文件会自动删除。数据目录与文件仅当前系统用户可读。
 
-配置环境变量：`DOMAINDECK_DATA`（默认 `./data-node`）、`HOST`（默认 `127.0.0.1`）、`PORT`（默认 `4780`）。生产部署使用 HTTPS 反向代理，默认不直接公开监听端口。
+配置环境变量：`DOMAINDECK_DATA`（默认 `./data-node`）、`HOST`（默认 `127.0.0.1`）、`PORT`（默认 `4780`）、`DOMAINDECK_PUBLIC_ORIGIN`（可选，浏览器实际访问的 `https://域名[:端口]`）。生产部署使用 HTTPS 反向代理，默认不直接公开监听端口。
 
 命令行支持 `-data DIRECTORY`、`-addr 127.0.0.1:4780`、`-open`、`-auto-port=false`、`-version`，也接受双横线和 `=value` 形式。端口 `0` 自动选择空闲端口；回环端口冲突最多尝试后续 20 个端口，公共地址不自动切换端口。`-open` 调用系统浏览器，服务继续运行在终端中。启动地址写入数据目录的 `domaindeck.log`，不记录密码或业务请求。
 
@@ -61,7 +61,7 @@ sudo cat /var/lib/domaindeck-node/initial-admin-password
 
 使用 `/opt/domaindeck-node`、`/var/lib/domaindeck-node` 和独立服务 `domaindeck-node`，监听 `127.0.0.1:4781`。启动检查通过才报告成功，端口占用会报错而不更换端口。关闭浏览器和 SSH 后服务继续运行，开机自动启动。
 
-服务使用独立复制的 Node 二进制；指定 nvm/宝塔路径时先验证版本和 SQLite 功能再复制。反向代理目标为 `http://127.0.0.1:4781`，保留原始 `Host`，启用 HTTPS；不需要 CORS。
+服务使用独立复制的 Node 二进制；指定 nvm/宝塔路径时先验证版本和 SQLite 功能再复制。反向代理目标为 `http://127.0.0.1:4781`，保留原始 `Host`，启用 HTTPS；不需要 CORS。宝塔部署推荐 `sudo bash deploy/install.sh --public-origin https://你的域名`，协议和端口必须与地址栏一致；配置写入 `/etc/domaindeck-node.env`，重装时不传该参数会保留。登录提示 `Cross-origin request rejected` 时先检查代理发送域名与公开地址，不需要重置密码；完整配置见 [部署说明](docs/DEPLOYMENT.md#宝塔--nginx-反向代理与登录)。
 
 ## 更新与迁移
 

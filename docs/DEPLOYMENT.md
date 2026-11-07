@@ -9,6 +9,8 @@
 ```sh
 # 自动寻找或下载独立运行时
 sudo bash deploy/install.sh
+# HTTPS 反向代理部署：填写浏览器实际访问的站点地址
+sudo bash deploy/install.sh --public-origin https://deck.example.com
 # 指定宝塔已有的 Node 24，禁止下载
 sudo bash deploy/install.sh --node /www/server/nodejs/v24.22.2/bin/node --no-download
 # 只检查现有运行时，不下载或修改文件
@@ -26,6 +28,34 @@ sudo systemctl stop domaindeck-node
 sudo cp -a /var/lib/domaindeck-node /var/lib/domaindeck-node-backup
 sudo systemctl start domaindeck-node
 ```
+
+## 宝塔 / Nginx 反向代理与登录
+
+如果登录返回 `Cross-origin request rejected`，说明请求在密码校验前被拒绝。常见原因是代理将上游 Host 改成 `127.0.0.1:4781`，但浏览器 Origin 是公开域名。无需重置密码或重新初始化数据库。
+
+在宝塔的网站反向代理配置中，目标设为 `http://127.0.0.1:4781`，发送域名保持浏览器访问的域名。对应 Nginx 配置如下，修改后检查配置并重载：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:4781;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+beta.5 起推荐同时通过安装参数 `--public-origin https://deck.example.com` 明确允许的浏览器地址。必须与地址栏的协议、域名和非默认端口一致，只能设置一个站点地址，不带页面路径、查询或片段。应用不会因为任意 `X-Forwarded-Host` / `Forwarded` 头而放行。配置后仅该 Origin 被允许，其他站点仍返回 403；没有 Origin 的健康检查和命令行 API 请求仍按现有认证规则处理。
+
+安装参数写入 root 所有的 `/etc/domaindeck-node.env`（0600），systemd 每次启动读取；重装时不传 `--public-origin` 会保留已有文件，在线更新同样保留。已有 beta.4 服务也可先修正代理 Host，或安装 beta.5 后配置站点地址。手工设置示例（替换为实际地址，HTTPS 站点不要填 HTTP；如文件已有其他自定义变量，请编辑文件保留它们）：
+
+```sh
+sudo install -m 600 -o root -g root /dev/null /etc/domaindeck-node.env
+printf '%s\n' 'DOMAINDECK_PUBLIC_ORIGIN=https://deck.example.com' | sudo tee /etc/domaindeck-node.env >/dev/null
+sudo systemctl restart domaindeck-node
+```
+
+手工启动可用 `DOMAINDECK_PUBLIC_ORIGIN=https://deck.example.com node src/cli.js`，或传入 `--public-origin https://deck.example.com`。非法配置在创建数据目录前拒绝启动。未配置时，代理必须保留 Host，继续按浏览器 Origin 的主机与请求 Host 一致进行检查；兼容 HTTPS 终止代理。不添加跨站 CORS 通配符，也不要移除 Origin 检查。
 
 ## 旧版迁移
 

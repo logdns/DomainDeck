@@ -9,16 +9,18 @@ import { createApp } from './server.js';
 import { createUpdater } from './update.js';
 import { createNotificationService } from './notifications.js';
 import { seedDemo, demoTransport } from './demo.js';
+import { publicOrigin } from './origin.js';
 
 process.umask(0o077);
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)));
 if (process.argv.includes('--version') || process.argv.includes('-version')) { console.log(version); process.exit(0); }
 if (process.argv.includes('--help') || process.argv.includes('-help')) {
-  console.log('DomainDeck --data DIRECTORY --addr HOST:PORT --open --auto-port=false --demo --version');
+  console.log('DomainDeck --data DIRECTORY --addr HOST:PORT --public-origin https://your-domain --open --auto-port=false --demo --version');
   process.exit(0);
 }
 const args = process.argv.slice(2).flatMap((value) => value.includes('=') ? [value.slice(0, value.indexOf('=')), value.slice(value.indexOf('=') + 1)] : [value]);
 const argument = (name, fallback) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] || fallback : fallback; };
+const configuredOrigin = publicOrigin(argument('--public-origin', process.env.DOMAINDECK_PUBLIC_ORIGIN));
 const address = argument('-addr', argument('--addr', ''));
 let host = process.env.HOST || '127.0.0.1';
 let requestedPort = Number(process.env.PORT || 4780);
@@ -39,7 +41,7 @@ const updater = demo ? undefined : createUpdater({ version, dataDirectory, datab
 const notifications = createNotificationService(database, { key, ...(demo ? { notificationTransport: async () => { throw new Error('Demo delivery disabled'); }, mailSender: async () => { throw new Error('Demo mail disabled'); } } : {}) });
 const notificationTimer = setInterval(() => { notifications.run().catch(() => {}); }, 60 * 60 * 1000);
 notificationTimer.unref();
-server = createApp(database, { key, dataDirectory, version, updater, notifications, ...(demo ? { transport: demoTransport, demo: true } : {}) });
+server = createApp(database, { key, dataDirectory, version, updater, notifications, publicOrigin: configuredOrigin, ...(demo ? { transport: demoTransport, demo: true } : {}) });
 if (!Number.isInteger(requestedPort) || requestedPort < 0 || requestedPort > 65535) throw new Error('Invalid PORT');
 const autoPort = argument('-auto-port', argument('--auto-port', 'true')) !== 'false' && !args.includes('--no-auto-port') && ['127.0.0.1', 'localhost', '::1'].includes(host);
 const openBrowser = (args.includes('-open') && argument('-open', 'true') !== 'false') || (args.includes('--open') && argument('--open', 'true') !== 'false');

@@ -4,6 +4,7 @@ import { authenticateAccount } from './accounts.js';
 import { createSession, deleteSession, getSessionUser } from './sessions.js';
 import { HttpError, resource } from './resources.js';
 import { authorize, userPermissions } from './permissions.js';
+import { publicOrigin, allowsOrigin } from './origin.js';
 
 const assets = new Map([
   ['/', ['text/html; charset=utf-8', new URL('../public/index.html', import.meta.url)]],
@@ -32,6 +33,7 @@ async function readBody(request, limit) {
 }
 
 export function createApp(database, options = {}) {
+  const configuredOrigin = publicOrigin(options.publicOrigin);
   const attempts = new Map();
   let authenticating = 0;
   let mutations = 0;
@@ -52,9 +54,7 @@ export function createApp(database, options = {}) {
       }
       if (method === 'GET' && path === '/api/health') { respond(response, 200, { status: 'ok', version: options.version }); return; }
       if (request.headers.origin) {
-        let origin;
-        try { origin = new URL(request.headers.origin); } catch { throw new HttpError(403, 'Invalid origin'); }
-        if (origin.host !== request.headers.host || !['https:', 'http:'].includes(origin.protocol)) throw new HttpError(403, 'Cross-origin request rejected');
+        if (!allowsOrigin(request.headers.origin, request.headers.host, configuredOrigin)) throw new HttpError(403, 'Cross-origin request rejected');
       }
       if (method === 'POST' && path === '/api/v1/auth/login') {
         const now = Date.now();

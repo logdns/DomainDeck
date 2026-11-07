@@ -2,18 +2,21 @@
 set -euo pipefail
 APP_ROOT=/opt/domaindeck-node
 DATA_ROOT=/var/lib/domaindeck-node
+ENV_FILE=/etc/domaindeck-node.env
 SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=deploy/runtime.sh
 source "$SOURCE_ROOT/deploy/runtime.sh"
 NODE_OVERRIDE=''
 DOWNLOAD=true
 CHECK_ONLY=false
+PUBLIC_ORIGIN=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --node) [[ $# -ge 2 ]] || { echo '--node requires an absolute executable path.' >&2; exit 1; }; NODE_OVERRIDE="$2"; shift 2 ;;
     --no-download) DOWNLOAD=false; shift ;;
     --check) CHECK_ONLY=true; shift ;;
-    --help|-h) echo 'Usage: bash deploy/install.sh [--node /absolute/path/to/node] [--no-download] [--check]'; exit 0 ;;
+    --public-origin) [[ $# -ge 2 && -n "$2" ]] || { echo '--public-origin requires http(s)://hostname[:port].' >&2; exit 1; }; PUBLIC_ORIGIN="$2"; shift 2 ;;
+    --help|-h) echo 'Usage: bash deploy/install.sh [--node /absolute/path/to/node] [--public-origin https://your-domain] [--no-download] [--check]'; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -30,6 +33,11 @@ NODE_BIN="$(find_node "$APP_ROOT/runtime" "$NODE_OVERRIDE")" || {
   NODE_BIN=''
 }
 if [[ "$CHECK_ONLY" == true ]]; then
+  if [[ -n "$PUBLIC_ORIGIN" ]]; then
+    "$NODE_BIN" --input-type=module -e 'const { publicOrigin } = await import(process.argv[1]); publicOrigin(process.argv[2]);' "file://$SOURCE_ROOT/src/origin.js" "$PUBLIC_ORIGIN" < /dev/null 2>/dev/null || {
+      echo 'Invalid --public-origin. Use http(s)://hostname[:port] without credentials, path, query or fragment.' >&2; exit 1;
+    }
+  fi
   echo "Runtime check passed: $NODE_BIN ($("$NODE_BIN" --version)); SQLite available. No files changed."
   exit 0
 fi
@@ -41,6 +49,9 @@ fi
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
 if [[ -z "$NODE_BIN" ]]; then NODE_BIN="$(download_node "$SCRATCH")"; fi
+if [[ -n "$PUBLIC_ORIGIN" ]]; then
+  PUBLIC_ORIGIN="$("$NODE_BIN" --input-type=module -e 'const { publicOrigin } = await import(process.argv[1]); console.log(publicOrigin(process.argv[2]));' "file://$SOURCE_ROOT/src/origin.js" "$PUBLIC_ORIGIN")"
+fi
 VERSION="$("$NODE_BIN" -p "JSON.parse(require('fs').readFileSync(process.argv[1])).version" "$SOURCE_ROOT/package.json")"
 [[ "$VERSION" =~ ^3\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || exit 1
 for SOURCE_FILE in src/cli.js public/index.html public/app.js public/style.css; do
@@ -54,10 +65,13 @@ if [[ "$NODE_BIN" != "$APP_ROOT/runtime/node" ]]; then
   mv -f "$APP_ROOT/runtime/.node-install" "$APP_ROOT/runtime/node"
 fi
 NODE_BIN="$APP_ROOT/runtime/node"
-DESTINATION="$APP_ROOT/releases/$VERSION-$(date +%s)"
-install -d -m 700 "$DESTINATION"
+DESTINATION="$(mktemp -d "$APP_ROOT/releases/$VERSION-XXXXXXXX")"
 cp -R "$SOURCE_ROOT/src" "$SOURCE_ROOT/public" "$SOURCE_ROOT/package.json" "$DESTINATION/"
 chown -R domaindeck-node:domaindeck-node "$DESTINATION"
+if [[ -n "$PUBLIC_ORIGIN" ]]; then
+  printf 'DOMAINDECK_PUBLIC_ORIGIN=%s\n' "$PUBLIC_ORIGIN" > "$SCRATCH/environment"
+  install -m 600 -o root -g root "$SCRATCH/environment" "$ENV_FILE"
+fi
 ln -s "$DESTINATION" "$APP_ROOT/.current-install"
 mv -Tf "$APP_ROOT/.current-install" "$APP_ROOT/current"
 cat > /etc/systemd/system/domaindeck-node.service <<EOF
@@ -76,6 +90,7 @@ Environment=DOMAINDECK_DATA=$DATA_ROOT
 Environment=DOMAINDECK_INSTALL=$APP_ROOT
 Environment=HOST=127.0.0.1
 Environment=PORT=4781
+EnvironmentFile=-$ENV_FILE
 ExecStart=$NODE_BIN $APP_ROOT/current/src/cli.js --auto-port=false
 Restart=always
 RestartSec=3
@@ -120,5 +135,6 @@ if ! "$NODE_BIN" --input-type=module -e '
 fi
 echo "Installed DomainDeck $VERSION with $("$NODE_BIN" --version). Service health check passed."
 echo "Open http://127.0.0.1:4781 via your HTTPS reverse proxy."
+echo "Public origin configuration (preserved on reinstall): $ENV_FILE"
 echo "Initial username: admin. Password file: $DATA_ROOT/initial-admin-password"
 echo 'Check: systemctl status domaindeck-node; journalctl -u domaindeck-node'

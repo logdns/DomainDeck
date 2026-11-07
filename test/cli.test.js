@@ -13,7 +13,7 @@ import { createServer } from 'node:net';
 test('production entrypoint boots with isolated data, serves UI, and shuts down gracefully', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'domaindeck-cli-'));
   const port = 20000 + Math.floor(Math.random() * 30000);
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../src/cli.js', import.meta.url))], { env: { PATH: process.env.PATH, HOME: directory, TMPDIR: directory, DOMAINDECK_DATA: directory, HOST: '127.0.0.1', PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../src/cli.js', import.meta.url))], { env: { PATH: process.env.PATH, HOME: directory, TMPDIR: directory, DOMAINDECK_DATA: directory, DOMAINDECK_PUBLIC_ORIGIN: 'https://deck.example.test', HOST: '127.0.0.1', PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   child.stdout.on('data', (chunk) => { output += chunk; });
   child.stderr.on('data', (chunk) => { output += chunk; });
@@ -28,12 +28,23 @@ test('production entrypoint boots with isolated data, serves UI, and shuts down 
     for (const path of ['/app.js', '/style.css']) assert.equal((await fetch(base + path)).status, 200);
     const password = readFileSync(join(directory, 'initial-admin-password'), 'utf8').trim();
     assert.ok(!output.includes(password));
-    const login = await fetch(`${base}/api/v1/auth/login`, { method: 'POST', body: JSON.stringify({ username: 'admin', password }) });
+    const login = await fetch(`${base}/api/v1/auth/login`, { method: 'POST', headers: { Origin: 'https://deck.example.test' }, body: JSON.stringify({ username: 'admin', password }) });
     assert.equal(login.status, 200);
     child.kill('SIGTERM');
     const [code] = await exit;
     assert.equal(code, 0);
   } finally { if (child.exitCode === null) { child.kill('SIGKILL'); await exit; } rmSync(directory, { recursive: true }); }
+});
+
+test('invalid public origin fails before creating a data directory', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'domaindeck-invalid-origin-'));
+  const data = join(directory, 'new-data');
+  try {
+    const failed = spawnSync(process.execPath, [fileURLToPath(new URL('../src/cli.js', import.meta.url)), '--data', data, '--public-origin', 'https://deck.example.test/path'], { env: { PATH: process.env.PATH, HOME: directory, TMPDIR: directory }, encoding: 'utf8', timeout: 5000 });
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /Invalid public origin/);
+    assert.equal(existsSync(data), false);
+  } finally { rmSync(directory, { recursive: true }); }
 });
 
 test('missing vault key with notification-only data fails startup without replacing the key', async () => {
