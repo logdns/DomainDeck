@@ -54,9 +54,20 @@ if [[ -n "$PUBLIC_ORIGIN" ]]; then
 fi
 VERSION="$("$NODE_BIN" -p "JSON.parse(require('fs').readFileSync(process.argv[1])).version" "$SOURCE_ROOT/package.json")"
 [[ "$VERSION" =~ ^3\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || exit 1
-for SOURCE_FILE in src/cli.js public/index.html public/app.js public/style.css; do
+for SOURCE_FILE in src/cli.js public/index.html; do
   [[ -f "$SOURCE_ROOT/$SOURCE_FILE" ]] || { echo "Incomplete package: $SOURCE_FILE missing." >&2; exit 1; }
 done
+"$NODE_BIN" --input-type=module -e '
+  import { existsSync, readFileSync } from "node:fs";
+  import { join } from "node:path";
+  const root = process.argv[1];
+  const html = readFileSync(join(root, "public/index.html"), "utf8");
+  const references = [...html.matchAll(/(?:src|href)=["\x27](\/(?:js|jse|css)\/[^"\x27]+\.(?:js|css))["\x27]/g)];
+  if (!references.length || references.some((entry) => !existsSync(join(root, "public", entry[1])))) {
+    console.error("Incomplete Vben frontend. Install the full DomainDeck-node-linux.tar.gz release package.");
+    process.exit(1);
+  }
+' "$SOURCE_ROOT"
 if ! id domaindeck-node >/dev/null 2>&1; then useradd --system --home-dir "$DATA_ROOT" --shell /usr/sbin/nologin domaindeck-node; fi
 install -d -m 700 -o domaindeck-node -g domaindeck-node "$APP_ROOT" "$APP_ROOT/releases" "$DATA_ROOT"
 install -d -m 755 -o root -g root "$APP_ROOT/runtime"

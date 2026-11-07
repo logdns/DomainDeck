@@ -1,6 +1,6 @@
 # 旧版功能迁移对照
 
-以旧 Go 项目 `internal/api/{auth,domain,dns,pay,system,update}.go` 注册的业务接口为清单。新系统独立使用 Node.js 24、SQLite 和浏览器原生 JavaScript，不依赖 Go 或相邻 Vue 工程。这里对照业务能力，不承诺旧前端的接口字段和 URL 完全兼容。
+以旧 Go 项目 `internal/api/{auth,domain,dns,pay,system,update}.go` 注册的业务接口为清单。新版使用 Node.js 24、SQLite，以及直接迁入仓库的原 Vue Vben Admin 页面，不再依赖 Go 或相邻前端目录。`/api/vben` 对原页面的数据字段、列表结构和表单作显式兼容，内部仍经过与 `/api/v1` 相同的权限与业务检查。
 
 | 旧版功能 | 新版入口与实现 | 自动验证 |
 | --- | --- | --- |
@@ -32,7 +32,7 @@
 
 ## 服务商能力边界
 
-- **Spaceship**：按 <https://docs.spaceship.dev/> 的 API Key/Secret、分页、联系人、域名交易、DNS 与异步操作协议实现。202 空响应通过 `spaceship-async-operationid` 跟踪。DNS 不存在单条原位 PATCH，界面提供新增/删除；删除时不发送 `ttl`、`group` 等响应专用字段。公开 API 没有支付方式和账单列表，使用本地记账。
+- **Spaceship**：按 <https://docs.spaceship.dev/> 的 API Key/Secret、分页、联系人、域名交易、DNS 与异步操作协议实现。202 空响应通过 `spaceship-async-operationid` 跟踪。DNS 编辑采用先新增替代记录、再删除原记录；第二步失败明确要求刷新后核对，避免盲目重试。删除时不发送 `ttl`、`group`；MX 使用 `preference`，ALIAS 使用 `aliasName`，PTR 使用 `pointer`，SRV 保留带下划线的 service/protocol。公开 API 没有支付方式和账单列表，使用本地记账。
 - **Porkbun**：保留 API Key/Secret 接入、分页域名、DNS、注册/续费/转入、NS、自动续费、余额和账单。扣款使用整型美分，在提交前再次核对价格。不虚构授权码或转移锁 API。
 - **Cloudflare**：DNS zones 与 Registrar registrations 分开读取和同步。报价使用 POST；公开购买接口未接入，注册/手动续费/转入及授权码需到官方后台。账单和支付资料只读，完整卡号裁剪为末四位。
 - **GoDaddy / Namecheap**：保留旧声明式模板暴露的域名、详情、续费和设置能力。Namecheap 只暴露查询和续费；GoDaddy 不开启整域覆盖式 DNS 写入或未声明的转入。报价不可验证的自定义服务商，必须额外确认按官方价格扣款。预设支持分页，自定义声明可通过 `pagination.pageSize` 和 `{page}`/`{cursor}` 扩展分页。

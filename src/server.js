@@ -1,16 +1,13 @@
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
 import { authenticateAccount } from './accounts.js';
 import { createSession, deleteSession, getSessionUser } from './sessions.js';
 import { HttpError, resource } from './resources.js';
 import { authorize, userPermissions } from './permissions.js';
 import { publicOrigin, allowsOrigin } from './origin.js';
+import { vbenResource } from './vben.js';
+import { publicAssets, sendAsset } from './static.js';
 
-const assets = new Map([
-  ['/', ['text/html; charset=utf-8', new URL('../public/index.html', import.meta.url)]],
-  ['/app.js', ['text/javascript; charset=utf-8', new URL('../public/app.js', import.meta.url)]],
-  ['/style.css', ['text/css; charset=utf-8', new URL('../public/style.css', import.meta.url)]],
-]);
+const assets = publicAssets();
 
 function respond(response, status, data, message = 'ok') {
   response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -41,15 +38,15 @@ export function createApp(database, options = {}) {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
-    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
     let mutation = false;
     try {
-      const path = new URL(request.url, 'http://localhost').pathname;
+      const requestedPath = new URL(request.url, 'http://localhost').pathname;
+      const vben = requestedPath.startsWith('/api/vben/');
+      const path = vben ? requestedPath.replace('/api/vben/', '/api/v1/') : requestedPath;
       const method = request.method;
       if (method === 'GET' && assets.has(path)) {
-        const [contentType, file] = assets.get(path);
-        response.writeHead(200, { 'Content-Type': contentType });
-        response.end(readFileSync(file));
+        sendAsset(response, assets.get(path));
         return;
       }
       if (method === 'GET' && path === '/api/health') { respond(response, 200, { status: 'ok', version: options.version }); return; }
@@ -78,7 +75,11 @@ export function createApp(database, options = {}) {
       const token = header.startsWith('Bearer ') ? header.slice(7) : '';
       const user = getSessionUser(database, token);
       if (!user) throw new HttpError(401, 'Unauthorized');
-      if (method === 'GET' && path === '/api/v1/user/info') { respond(response, 200, { ...JSON.parse(database.prepare('SELECT profile_json FROM users WHERE id=?').get(user.id).profile_json), userId: user.id, username: user.username, role: user.role, permissions: userPermissions(database, user) }); return; }
+      if (method === 'GET' && path === '/api/v1/user/info') {
+        const permissions = userPermissions(database, user);
+        const homePath = [['domain:read', '/overview'], ['dns:read', '/dns'], ['payment:read', '/payments'], ['settings:read', '/settings'], ['account:read', '/system/accounts'], ['role:read', '/system/roles']].find(([permission]) => permissions.includes(permission))?.[1] || '/access-denied';
+        respond(response, 200, { ...JSON.parse(database.prepare('SELECT profile_json FROM users WHERE id=?').get(user.id).profile_json), userId: user.id, username: user.username, role: user.role, roles: [user.role === 'admin' ? 'super' : 'viewer'], homePath, permissions }); return;
+      }
       if (method === 'POST' && path === '/api/v1/auth/logout') { deleteSession(database, token); respond(response, 200, { ok: true }); return; }
       authorize(database, user, path, method);
       if (options.demo && path === '/api/v1/lookup') throw new HttpError(409, 'External DNS queries are disabled in demo mode');
@@ -88,7 +89,7 @@ export function createApp(database, options = {}) {
         mutation = true;
       }
       const body = method === 'GET' ? {} : await readBody(request, path.endsWith('/import') ? 1024 * 1024 : path.includes('/providers/custom') || path === '/api/v1/notifications' ? 128000 : 16384);
-      respond(response, 200, await resource(database, { ...options, user, method, path, body, query: new URL(request.url, 'http://localhost').searchParams }));
+      respond(response, 200, await (vben ? vbenResource : resource)(database, { ...options, user, method, path, body, query: new URL(request.url, 'http://localhost').searchParams }));
     } catch (error) {
       const status = error.status || (error.code?.startsWith('ERR_SQLITE') ? 409 : 500);
       if (!response.headersSent) respond(response, status, null, error.status ? error.message : status === 409 ? 'Data conflict or invalid fields' : 'Internal server error');

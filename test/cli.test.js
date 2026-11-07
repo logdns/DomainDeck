@@ -23,9 +23,10 @@ test('production entrypoint boots with isolated data, serves UI, and shuts down 
     assert.ok(output.includes('listening'), output);
     const base = `http://127.0.0.1:${port}`;
     const page = await fetch(base);
-    assert.match(await page.text(), /DomainDeck/);
+    const html = await page.text();
+    assert.match(html, /DomainDeck/);
     assert.match(page.headers.get('content-security-policy'), /script-src 'self'/);
-    for (const path of ['/app.js', '/style.css']) assert.equal((await fetch(base + path)).status, 200);
+    for (const reference of html.matchAll(/(?:src|href)=["'](\/[^"']+\.(?:js|css))["']/g)) assert.equal((await fetch(base + reference[1])).status, 200, reference[1]);
     const password = readFileSync(join(directory, 'initial-admin-password'), 'utf8').trim();
     assert.ok(!output.includes(password));
     const login = await fetch(`${base}/api/v1/auth/login`, { method: 'POST', headers: { Origin: 'https://deck.example.test' }, body: JSON.stringify({ username: 'admin', password }) });

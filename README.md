@@ -1,8 +1,8 @@
 # DomainDeck 3
 
-独立重构的 **Node.js 24 + SQLite** 域名工作台。无 npm 运行依赖、无需前端编译，包含蓝色品牌、大字体、响应式布局、中英文和深色模式。
+独立重构的 **Node.js 24 + SQLite** 域名工作台。前端使用 [Vue Vben Admin 5.8](https://doc.vben.pro/)、Vue 3、Pinia、Vue Router 和 Ant Design Vue，恢复原有蓝色品牌、大字体、圆角导航、响应式布局、中英文和深色模式。发布包已包含编译后的界面，服务器无需安装前端依赖。
 
-这是 `3.0.0-beta.5` 公开测试版，迁入旧版账户与角色、域名交易、DNS、支付台账、通知、自定义注册商和离线数据迁移。本版增加明确的公开站点地址配置，解决宝塔 / Nginx 改写 Host 后登录被拒绝的问题，保留跨站保护与独立 Node 24 安装流程。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
+这是 `3.0.0-beta.6` 公开测试版。原 Vben 页面通过 `/api/vben` 兼容层连接新的 SQLite 业务服务，保留 `/api/v1` API。本版修复登录退出、表单字段、角色权限、报价状态、DNS 记录格式、密钥保留和接入同步。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
 
 ## 功能
 
@@ -21,13 +21,13 @@
 
 ## 快速开始
 
-安装 Node.js **24**，无需 `npm install`：
+下载并解压 Release 完整包后，安装 Node.js **24**，无需 `npm install`：
 
 ```sh
 npm start
 ```
 
-访问 `http://127.0.0.1:4780`。初始用户名为 `admin`，从 `data-node/initial-admin-password` 读取随机密码。登录后在「账户权限」修改密码，密码文件会自动删除。数据目录与文件仅当前系统用户可读。
+访问 `http://127.0.0.1:4780`。初始用户名为 `admin`，从 `data-node/initial-admin-password` 读取随机密码。登录后在「系统设置」修改密码，密码文件会自动删除并要求重新登录。数据目录与文件仅当前系统用户可读。GitHub 自动生成的 Source code 归档不含编译界面，开发者需按 [前端构建说明](docs/FRONTEND.md) 构建。
 
 配置环境变量：`DOMAINDECK_DATA`（默认 `./data-node`）、`HOST`（默认 `127.0.0.1`）、`PORT`（默认 `4780`）、`DOMAINDECK_PUBLIC_ORIGIN`（可选，浏览器实际访问的 `https://域名[:端口]`）。生产部署使用 HTTPS 反向代理，默认不直接公开监听端口。
 
@@ -67,11 +67,13 @@ sudo cat /var/lib/domaindeck-node/initial-admin-password
 
 见 [部署与迁移](docs/DEPLOYMENT.md) 和 [发布说明](docs/RELEASE.md)。后台「版本与设置」检查并安装后续 Node 3.x 版本。测试版频道可以看到 beta；稳定版只看到稳定发布。更新不会覆盖旧 Go 服务和数据。
 
+**beta.1–beta.5 升级本版需要解压完整 `DomainDeck-node-linux.tar.gz` 并重新运行安装器**，旧版更新器不能安装 Vben 多文件资源。安装器保留已有数据库、密码、密钥及公开站点配置；重启事务迁移到 schema 6。升级前备份整个数据目录。
+
 旧版域名 JSON 可通过「域名资产 → 导入 JSON」迁入。完整 JSON 数据快照可使用 `node scripts/import-legacy.js OLD_SNAPSHOT NEW_DIRECTORY` 离线导入，保留兼容的账户密码散列、角色、接入、支付台账、订单与通知配置；服务商和通知密钥加密写入 SQLite。目标必须是不存在的新目录，失败时回滚，不覆盖已有部署。详见 [迁移说明](docs/DEPLOYMENT.md)。升级后的计费与自动通知保持关闭，需核对后启用。
 
 ## 开发与隔离验证
 
-`npm test` 运行内置测试。`npm run build` 生成通用 Linux 源码包、在线更新 bundle 和 SHA-256；x64 和 ARM64 共用同一份源码，运行需要 Node.js 24。
+`npm test` 运行后端测试。前端需要先独立构建并把 `frontend/apps/web-antd/dist/` 内容复制到 `public/`，再运行 `npm run build` 生成通用 Linux 程序包、在线更新 bundle 和 SHA-256。缺少编译后的前端时拒绝打包；x64 和 ARM64 共用源码，运行需要 Node.js 24。Actions 先准备锁定依赖且禁用安装脚本，再禁网运行类型检查、前后端测试、真实浏览器集成和构建。
 
 严格隔离验证使用预先准备的 Node 24 镜像：
 
@@ -85,11 +87,11 @@ docker run --rm --pull=never --network none --read-only --user 65534:65534 \
   --mount "type=bind,src=$(pwd),dst=/src,readonly" \
   --workdir /src --entrypoint /usr/bin/env node:24-bookworm-slim \
   -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/scratch TMPDIR=/scratch \
-  /usr/bin/timeout 90s /usr/local/bin/node --test
+  /usr/bin/timeout 90s /usr/local/bin/node --test test/*.test.js
 ```
 
 在此目录运行命令。测试禁用外网，使用空环境、只读源码和工具链，只有有容量上限的临时 scratch 可写。所有服务商测试使用模拟响应，不访问真实账户。
 
 ## 安全与发布边界
 
-见 [专项安全检查](docs/SECURITY.md)。公开仓库只含新的 Node 代码、测试、文档和流水线；没有旧工程、运行数据、密钥、截图、开发环境文件或第三方前端源码。本项目当前未授予开源许可证，公开可读不代表授予额外使用许可。
+见 [专项安全检查](docs/SECURITY.md)。公开仓库包含 Node 服务、Vben 前端源码、测试、文档和流水线，不包含实际运行数据或凭据。前端环境文件只包含公开构建参数，浏览器缓存混淆常量不属于服务端加密密钥。Vben 的 MIT 许可证及图标声明见 [第三方声明](docs/THIRD-PARTY.md)；第三方组件按原许可证分发，本项目自有代码未另授予开源许可证。

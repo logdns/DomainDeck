@@ -27,7 +27,8 @@ export function requiredPermission(path, method) {
   if (/\/(payments|payment-types|invoices|orders)(\/|$)/.test(path)) return `payment:${read ? 'read' : 'write'}`;
   if (path.includes('/dns') || path.endsWith('/lookup')) return `dns:${read ? 'read' : 'write'}`;
   if (/\/(register|renew)(\/|$)/.test(path)) return 'domain:billing';
-  if (path.includes('/auth-code') || path.includes('/transfer-lock')) return 'transfer:write';
+  if (path.includes('/auth-code')) return 'transfer:write';
+  if (path.includes('/transfer-lock')) return 'domain:write';
   if (path.endsWith('/availability') || path.endsWith('/transfer/quotes')) return 'domain:read';
   if (path.includes('/transfer')) return `transfer:${read ? 'read' : 'write'}`;
   if (path.includes('/operations')) return 'domain:read';

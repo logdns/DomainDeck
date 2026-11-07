@@ -39,7 +39,7 @@ export function text(value, limit = 2000) {
 }
 
 export function connectionView(row) {
-  return { id: row.id, name: row.name, provider: row.provider_ref || row.provider, enabled: Boolean(row.enabled), isDefault: Boolean(row.is_default), created_at: row.created_at };
+  return { id: row.id, name: row.name, provider: row.provider_ref || row.provider, enabled: Boolean(row.enabled), isDefault: Boolean(row.is_default), created_at: row.created_at, roles: row.roles_json ? JSON.parse(row.roles_json) : null, lastTestAt: row.last_test_at || null, lastTestOk: row.last_test_ok === null ? null : Boolean(row.last_test_ok), lastTestMessage: row.last_test_message || '', lastSyncAt: row.last_sync_at || null };
 }
 
 export function connection(database, id, key, includeDisabled = false) {

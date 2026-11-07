@@ -56,6 +56,7 @@ export function importLegacy(database, key, snapshot) {
       requireValue(builtin || custom.has(provider) || ['godaddy', 'namecheap'].includes(provider), 'Missing custom provider manifest');
       const credentials = builtin ? validateCredentials(provider, incoming) : incoming;
       database.prepare('INSERT INTO connections(id,name,provider,credentials,created_at,enabled,is_default,provider_ref) VALUES(?,?,?,?,?,?,?,?)').run(id, String(bound.name || provider), builtin ? provider : 'porkbun', encrypt(key, credentials), bound.createdAt || new Date().toISOString(), Number(bound.enabled !== false), Number(bound.isDefault === true && bound.enabled !== false), builtin ? '' : provider);
+      if (Array.isArray(bound.roles) && bound.roles.some((role) => ['registrar', 'dns'].includes(role))) database.prepare('UPDATE connections SET roles_json=? WHERE id=?').run(JSON.stringify(bound.roles.filter((role) => ['registrar', 'dns'].includes(role))), id);
       connectionIds.set(bound.id, id);
       summary.connections += 1;
     }

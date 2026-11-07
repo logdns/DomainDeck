@@ -59,8 +59,9 @@ export async function systemResource(database, context) {
     const provider = previous?.provider || body.provider;
     requireValue(!previous || !body.provider || body.provider === previous.provider, 'Provider cannot be changed on an existing connection');
     const name = text(body.name ?? previous?.name ?? '', 100);
+    requireValue(body.roles === undefined || Array.isArray(body.roles) && body.roles.length > 0 && body.roles.length <= 2 && body.roles.every((role) => ['registrar', 'dns'].includes(role)), 'Select registrar and/or DNS usage');
     requireValue(name, 'Connection name required');
-    const incoming = { ...(previous?.credentials || {}), ...(body.credentials || {}) };
+    const incoming = { ...(previous?.credentials || {}), ...Object.fromEntries(Object.entries(body.credentials || {}).filter(([field, value]) => !previous?.credentials[field] || value !== '')) };
     const credentials = builtins.some((item) => item.id === provider) ? validateCredentials(provider, incoming) : validateCustomCredentials(database, provider, incoming);
     const enabled = body.enabled === undefined ? previous?.enabled ?? 1 : Number(body.enabled === true);
     const isDefault = body.isDefault === undefined ? previous?.is_default ?? 0 : Number(body.isDefault === true);
@@ -70,6 +71,7 @@ export async function systemResource(database, context) {
       if (isDefault) database.prepare('UPDATE connections SET is_default=0').run();
       if (previous) database.prepare('UPDATE connections SET name=?,credentials=?,enabled=?,is_default=? WHERE id=?').run(name, encrypt(key, credentials), enabled, isDefault, id);
       else database.prepare('INSERT INTO connections(id,name,provider,credentials,created_at,enabled,is_default,provider_ref) VALUES(?,?,?,?,?,?,?,?)').run(id, name, builtins.some((item) => item.id === provider) ? provider : 'porkbun', encrypt(key, credentials), new Date().toISOString(), enabled, isDefault, builtins.some((item) => item.id === provider) ? '' : provider);
+      if (body.roles) database.prepare('UPDATE connections SET roles_json=? WHERE id=?').run(JSON.stringify([...new Set(body.roles)]), id);
       log(previous ? 'connection.update' : 'connection.create', name);
     });
     return { id };
@@ -85,7 +87,13 @@ export async function systemResource(database, context) {
   }
   if (connectionMatch?.[2] === 'test' && method === 'POST') {
     const { adapter } = adapterFor(database, context, connectionMatch[1]);
-    await adapter.execute('test');
+    try {
+      await adapter.execute('test');
+      database.prepare('UPDATE connections SET last_test_at=?,last_test_ok=1,last_test_message=? WHERE id=?').run(new Date().toISOString(), 'Connection verified', connectionMatch[1]);
+    } catch (error) {
+      database.prepare('UPDATE connections SET last_test_at=?,last_test_ok=0,last_test_message=? WHERE id=?').run(new Date().toISOString(), 'API rejected or unavailable; check credentials and API permissions', connectionMatch[1]);
+      throw error;
+    }
     return { ok: true, message: 'Connection verified' };
   }
   if (path === '/api/v1/settings' && method === 'GET') return { safety: setting(database, 'safety'), contacts: setting(database, 'contacts'), update: { githubRepo: 'logdns/DomainDeck', channel: context.version?.includes('beta') ? 'beta' : 'stable' } };

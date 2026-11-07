@@ -1,29 +1,35 @@
-# DomainDeck 3.0.0-beta.5
+# DomainDeck 3.0.0-beta.6
 
-Node.js 24 + SQLite 的旧版功能迁移测试版，无 npm 依赖、无需前端编译。
+本版恢复原有 **Vue Vben Admin 5.8 + Ant Design Vue** 界面，并将它直接接到 Node.js 24 + SQLite。前端源码与锁定依赖纳入本仓库，构建不依赖相邻旧工程；原蓝色品牌、16px 正文、导航、概览卡片、主题、语言和手机布局保留。
 
-本版修复宝塔 / Nginx 代理改写 Host 后登录出现 `Cross-origin request rejected` 的配置问题。增加 `--public-origin https://你的域名` 安装参数和 `DOMAINDECK_PUBLIC_ORIGIN` 运行配置，精确匹配浏览器的公开站点地址，不放宽任意跨站请求，也不信任任意转发头。安装配置保存到 `/etc/domaindeck-node.env`，重装及在线更新保留；非法地址在初始化前拒绝。新增代理登录/退出、错误协议/端口、伪造转发头及重装保留配置的回归测试。已有账户、密码和注册商密钥不重置。
+## 修复内容
 
-宝塔用户可先将反向代理的发送域名设为浏览器实际域名（Nginx `proxy_set_header Host $http_host;`），再通过完整包 `sudo bash deploy/install.sh --public-origin https://你的域名` 升级。协议与非默认端口必须和地址栏一致。在线更新 bundle 仅更新程序，首次配置新的 systemd 环境文件请使用完整安装包。详细配置见 `docs/DEPLOYMENT.md`。
+- 原页面通过 `/api/vben` 获取正确的列表、详情、角色、权限、财务和通知数据；内部仍逐条进行权限检查，保留 `/api/v1`。
+- 修复退出未携带 token、失效会话触发重复退出的问题；改密及修改自己账户后重新登录，重置他人密码与修改本人密码分开。
+- 接入可同步域名，记录用途、测试状态和同步时间；编辑时秘密留空保留原配置，DNS-only 接入不能下单，registrar-only 接入不能操作 DNS。
+- 修复 Spaceship 可注册结果、MX/SRV/ALIAS/PTR 数据字段、DNS 替代编辑；Cloudflare SRV/CAA/TLSA/HTTPS 结构化表单正确提交。DNS-only Cloudflare 详情不再强制调用 Registrar API。
+- 购买会刷新所选接入和年限的报价，再明确确认扣款；保留唯一请求 ID 和不确定订单的防重保护。
+- 支付台账保留启用状态及账号字段，同步只读支付资料可在刷新后保留；通知测试正确显示成功/失败，配置不覆盖已有秘密；补上资产登记、JSON 导入和详情备注。
+- Vben 静态模块、字体和图标完整进入运行包，图标离线可用；更新器支持受限嵌套资源和二进制资产，拒绝缺失入口依赖。CSV 导出防止带空白的公式前缀执行。
+- 升级 Vue、Vue I18n、Axios、Vite、Zod 等依赖的安全补丁；依赖审计没有 high/critical，保留的构建工具 moderate/low 公告及隔离措施记录在 `docs/SECURITY.md`。
 
-保留 beta.4 的安装器修复：支持检测宝塔 Node、`--node` 指定路径、`--check` 预检和 `--no-download` 离线安装；缺少合适运行时时，下载官方 Node 24.22.2 并校验内置 SHA-256。运行时独立存放，不替换服务器原 Node。安装后验证服务健康与版本，端口冲突不再自动切换。
+## 安装与升级
 
-本版补全：旧声明式服务商模板与认证/价格/DNS 映射；无报价续费确认；原权限范围及通知发送历史迁移；订单支付关联；隔离演示、命令行参数、自动端口和浏览器启动；概览财务/活动、批量接入同步/测试、运行状态、支付校验、单笔订单同步、权限勾选和通知字段表单。Spaceship 同步保留注册/NS/状态，DNS 查询支持服务标签与公网解析器。非管理员不能创建或修改管理员、重置管理员密码或删除管理员。
+下载 `DomainDeck-node-linux.tar.gz` 与 `SHA256SUMS.txt`，校验后解压，在解压目录运行：
 
-- 迁入注册、续费、转入、NS、自动续费、授权码、转移锁、报价与异步订单状态。支持范围按服务商公开 API 限制。
-- 补全 Spaceship 官方 API，包含联系人和 DNS 新增/删除；Porkbun 保留域名、DNS、交易、余额与账单；Cloudflare 分离 DNS 区域与 Registrar 域名，并修正报价为 POST。
-- 增加 JSON/XML 声明式服务商及 GoDaddy、Namecheap 预设；自定义目标只允许公网 HTTPS，解析后固定 IP，拒绝重定向。
-- 迁入七种通知渠道、到期检查、持久化去重、续费提醒和发送日志；SMTP 强制 TLS/STARTTLS。
-- 增加支付记账、默认条目、订单核对、附加角色权限矩阵、密码重置、域名筛选/排序/备注和 CSV 导出。
-- 新增离线 JSON 数据迁移工具：空目录导入、事务回滚、兼容旧 scrypt 散列、加密密钥，不读取现有部署数据。
-- 新的计费保护：默认关闭，核对年限和总报价后显式确认；持久化唯一请求 ID，未确认订单阻止再次下单。
+```sh
+sha256sum --check --ignore-missing SHA256SUMS.txt
+sudo bash deploy/install.sh --public-origin https://你的实际域名
+```
 
-## 下载与使用
+公开地址的协议和端口必须与浏览器一致。服务监听 `127.0.0.1:4781`，运行时自动寻找或下载并校验 Node 24。离线安装可使用 `--node /absolute/path/to/node24 --no-download`；预检使用 `--check`。
 
-`DomainDeck-node-linux.tar.gz` 是两种架构通用的程序源码包。解压后 `sudo bash deploy/install.sh`，自动准备 Node.js 24，服务监听 127.0.0.1:4781。初始管理员 `admin`，密码位于 `/var/lib/domaindeck-node/initial-admin-password`。安装器下载需要 curl/CA/tar/gzip/sha256sum，官方 Node 需要兼容 glibc/libstdc++；也支持 `--node /absolute/path/to/node24 --no-download`。安装器修复通过此完整包提供，在线更新 bundle 仅更新运行程序。
+**beta.1–beta.5 首次升级到本版必须使用完整 tar 包重新执行安装器**，旧在线更新器无法接收 Vben 多文件 bundle。保留已有账户、密码、SQLite、vault.key 和站点配置；请先停服备份整个 `/var/lib/domaindeck-node`。启动时事务升级到 schema 6，降级须恢复匹配的数据库备份。新安装管理员 `admin` 的随机密码保存在该目录的 `initial-admin-password`，已有安装不会重置密码。
 
-`DomainDeck-node.bundle.json` 供后台在线更新使用。`SHA256SUMS.txt` 用于完整性校验。beta.1/beta.2 可直接更新，启动时事务升级 schema 5，已有账户及加密接入不重置。降级需同时恢复更新前数据库备份。无需真实凭据可运行 `node src/cli.js --demo --addr 127.0.0.1:0`，按终端提示读取隔离目录中的随机密码。桌面使用 Node + 系统浏览器，不提供自包含 Go 外壳。
+`DomainDeck-node.bundle.json` 用于 beta.6 及后续版本之间的在线更新。更新依赖 GitHub SHA-256 摘要校验、数据库备份和原子链接切换；当前不提供自动健康回滚。
 
-## 已知边界
+## 验证与边界
 
-仍为 beta，不会自动覆盖现有 Go 部署；完整功能对照见 `docs/PARITY.md`。服务商、扣款和通知使用模拟数据测试，未执行真实扣款、真实密钥测试或生产 systemd 部署。Spaceship DNS 修改通过新增替代记录后删除旧记录完成；Cloudflare 购买需官方后台；Spaceship 没有公开支付方式/账单 API，使用本地台账。完整卡号和 CVV 不迁移。旧版可配置任意更新 Feed 改为固定 GitHub Node 3.x 频道，旧 API 的数据形状及旧前端不保证兼容。无自动健康回滚，也不宣称完成独立全面安全审计。
+Actions 执行 Vben 类型检查、前端测试、生产构建、x64/ARM64 后端回归和一致打包、真实 Chromium 界面集成；测试和构建阶段禁网、只读源码并限制资源，联网只用于准备工具链和锁定依赖。Actions 的浏览器证据包含各页面与手机截图。
+
+仍为 beta。服务商协议、交易和通知测试使用虚构账户及模拟响应，没有用生产密钥执行真实扣款或发信，也没有操作用户服务器。Cloudflare 购买仍需官方后台；Spaceship 没有公开支付方式/账单列表；Porkbun 未公开的授权码/转移锁操作不虚构。本次针对认证、权限、适配层、凭据、DNS 和发布路径做源码及回归检查，不宣称外部独立全代码库安全审计。完整边界见 `docs/PARITY.md`、`docs/SECURITY.md`。

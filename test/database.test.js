@@ -47,7 +47,7 @@ test('upgrades the beta.1 schema without resetting accounts, connections or encr
   try {
     database.prepare('INSERT INTO users(id,username,password_hash,status,profile_json,role) VALUES(?,?,?,?,?,?)').run('existing', 'existing', 'hash-before-upgrade', 'active', '{}', 'admin');
     database.prepare('INSERT INTO connections(id,name,provider,credentials,created_at) VALUES(?,?,?,?,?)').run('connection', 'Porkbun', 'porkbun', 'encrypted-before-upgrade', '2026-01-01');
-    database.exec('ALTER TABLE users DROP COLUMN base_permissions_json; DROP TABLE notification_sent; DROP TABLE notification_log; DROP TABLE notification_channels; DROP TABLE orders; DROP TABLE payments; DROP TABLE provider_manifests; DROP TABLE settings; DROP TABLE user_roles; DROP TABLE roles; DROP INDEX connections_one_default; ALTER TABLE domains DROP COLUMN metadata_json; ALTER TABLE connections DROP COLUMN provider_ref; ALTER TABLE connections DROP COLUMN is_default; ALTER TABLE connections DROP COLUMN enabled; PRAGMA user_version=3;');
+    database.exec('ALTER TABLE connections DROP COLUMN roles_json; ALTER TABLE connections DROP COLUMN last_test_at; ALTER TABLE connections DROP COLUMN last_test_ok; ALTER TABLE connections DROP COLUMN last_test_message; ALTER TABLE connections DROP COLUMN last_sync_at; ALTER TABLE users DROP COLUMN base_permissions_json; DROP TABLE notification_sent; DROP TABLE notification_log; DROP TABLE notification_channels; DROP TABLE orders; DROP TABLE payments; DROP TABLE provider_manifests; DROP TABLE settings; DROP TABLE user_roles; DROP TABLE roles; DROP INDEX connections_one_default; ALTER TABLE domains DROP COLUMN metadata_json; ALTER TABLE connections DROP COLUMN provider_ref; ALTER TABLE connections DROP COLUMN is_default; ALTER TABLE connections DROP COLUMN enabled; PRAGMA user_version=3;');
     migrate(database);
     assert.equal(database.prepare('SELECT password_hash FROM users').get().password_hash, 'hash-before-upgrade');
     assert.equal(database.prepare('SELECT credentials,enabled FROM connections').get().credentials, 'encrypted-before-upgrade');
@@ -60,9 +60,9 @@ test('beta.2 upgrade retains existing viewer defaults and enables exact imported
   const database = openDatabase(':memory:');
   try {
     database.prepare('INSERT INTO users(id,username,password_hash,status,profile_json,role) VALUES(?,?,?,?,?,?)').run('viewer', 'viewer', 'original-hash', 'active', '{}', 'viewer');
-    database.exec('ALTER TABLE users DROP COLUMN base_permissions_json; PRAGMA user_version=4;');
+    database.exec('ALTER TABLE connections DROP COLUMN roles_json; ALTER TABLE connections DROP COLUMN last_test_at; ALTER TABLE connections DROP COLUMN last_test_ok; ALTER TABLE connections DROP COLUMN last_test_message; ALTER TABLE connections DROP COLUMN last_sync_at; ALTER TABLE users DROP COLUMN base_permissions_json; PRAGMA user_version=4;');
     migrate(database);
-    assert.equal(database.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(database.prepare('PRAGMA user_version').get().user_version, 6);
     assert.equal(database.prepare('SELECT password_hash FROM users').get().password_hash, 'original-hash');
     assert.equal(database.prepare('SELECT base_permissions_json FROM users').get().base_permissions_json, null);
   } finally { database.close(); }

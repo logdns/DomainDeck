@@ -43,6 +43,11 @@ const migrations = [
   CREATE TABLE notification_log (id INTEGER PRIMARY KEY, channel_id TEXT NOT NULL, subject TEXT NOT NULL, ok INTEGER NOT NULL CHECK(ok IN (0,1)), message TEXT NOT NULL, created_at TEXT NOT NULL) STRICT;
   CREATE TABLE notification_sent (dedupe_key TEXT PRIMARY KEY, sent_at TEXT NOT NULL) STRICT;`,
   `ALTER TABLE users ADD COLUMN base_permissions_json TEXT CHECK(base_permissions_json IS NULL OR json_valid(base_permissions_json));`,
+  `ALTER TABLE connections ADD COLUMN roles_json TEXT CHECK(roles_json IS NULL OR json_valid(roles_json));
+  ALTER TABLE connections ADD COLUMN last_test_at TEXT NOT NULL DEFAULT '';
+  ALTER TABLE connections ADD COLUMN last_test_ok INTEGER CHECK(last_test_ok IS NULL OR last_test_ok IN (0,1));
+  ALTER TABLE connections ADD COLUMN last_test_message TEXT NOT NULL DEFAULT '';
+  ALTER TABLE connections ADD COLUMN last_sync_at TEXT NOT NULL DEFAULT '';`,
 ];
 
 export function migrate(database) {

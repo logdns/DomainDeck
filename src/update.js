@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { backup } from 'node:sqlite';
 import { HttpError } from './errors.js';
 
@@ -16,18 +16,22 @@ export function compareVersions(first, second) {
 }
 
 export function validateBundle(bundle) {
-  if (!bundle || !versionPattern.test(bundle.version) || !Array.isArray(bundle.files) || bundle.files.length > 100) throw new Error('Invalid update bundle');
+  if (!bundle || !versionPattern.test(bundle.version) || !Array.isArray(bundle.files) || bundle.files.length > 2000) throw new Error('Invalid update bundle');
   const names = new Set();
   let size = 0;
   for (const file of bundle.files) {
-    if (!file || typeof file.path !== 'string' || !/^(?:src\/[a-z-]+\.js|public\/(?:index\.html|app\.js|style\.css)|package\.json)$/.test(file.path) || names.has(file.path) || typeof file.content !== 'string') throw new Error('Invalid bundle path');
+    if (!file || typeof file.path !== 'string' || !/^(?:src\/[a-z-]+\.js|public\/(?:[a-zA-Z0-9_.-]+\.(?:html|js|css|svg|png|ico|json)|(?:assets|js|jse|css)\/[a-zA-Z0-9_.-]+\.(?:js|css|svg|png|woff2?))|package\.json)$/.test(file.path) || names.has(file.path) || typeof file.content !== 'string' || file.encoding !== undefined && file.encoding !== 'base64') throw new Error('Invalid bundle path');
+    if (file.encoding === 'base64' && Buffer.from(file.content, 'base64').toString('base64') !== file.content) throw new Error('Invalid binary asset');
     names.add(file.path);
     size += Buffer.byteLength(file.content);
-    if (size > 2 * 1024 * 1024) throw new Error('Bundle too large');
+    if (size > 24 * 1024 * 1024) throw new Error('Bundle too large');
   }
-  for (const name of ['package.json', 'src/cli.js', 'public/index.html', 'public/app.js', 'public/style.css']) if (!names.has(name)) throw new Error('Incomplete bundle');
+  for (const name of ['package.json', 'src/cli.js', 'public/index.html']) if (!names.has(name)) throw new Error('Incomplete bundle');
   const manifest = JSON.parse(bundle.files.find((file) => file.path === 'package.json').content);
   if (manifest.version !== bundle.version || manifest.name !== 'domaindeck-node') throw new Error('Bundle version mismatch');
+  const html = bundle.files.find((file) => file.path === 'public/index.html');
+  if (html.encoding) throw new Error('Invalid HTML encoding');
+  for (const reference of html.content.matchAll(/(?:src|href)=["']\/((?:assets|js|jse|css)\/[^"']+|_app-config[^"']+)["']/g)) if (!names.has(`public/${reference[1]}`)) throw new Error('Missing frontend asset');
   return bundle;
 }
 
@@ -71,7 +75,7 @@ export function createUpdater({ version, installDirectory, dataDirectory, databa
       if (!available || Date.now() - available.checkedAt > 600000 || busy) throw new HttpError(409, 'Check for updates again');
       busy = true;
       try {
-        const bytes = await download(available.url, transport, { bytes: 3 * 1024 * 1024, redirects: 4 });
+        const bytes = await download(available.url, transport, { bytes: 32 * 1024 * 1024, redirects: 4 });
         if (createHash('sha256').update(bytes).digest('hex') !== available.digest) throw new HttpError(502, 'Update checksum mismatch');
         const bundle = validateBundle(JSON.parse(bytes));
         if (bundle.version !== available.version) throw new HttpError(502, 'Release version mismatch');
@@ -80,8 +84,8 @@ export function createUpdater({ version, installDirectory, dataDirectory, databa
         const directory = join(releases, `${bundle.version}-${randomUUID()}`);
         mkdirSync(directory, { mode: 0o700 });
         for (const file of bundle.files) {
-          mkdirSync(join(directory, file.path.split('/')[0] === 'package.json' ? '.' : file.path.split('/')[0]), { recursive: true, mode: 0o700 });
-          writeFileSync(join(directory, file.path), file.content, { flag: 'wx', mode: 0o600 });
+          mkdirSync(dirname(join(directory, file.path)), { recursive: true, mode: 0o700 });
+          writeFileSync(join(directory, file.path), file.encoding === 'base64' ? Buffer.from(file.content, 'base64') : file.content, { flag: 'wx', mode: 0o600 });
         }
         await backup(database, join(dataDirectory, `before-update-${Date.now()}.sqlite`));
         const current = join(installDirectory, 'current');

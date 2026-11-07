@@ -7,7 +7,7 @@ export async function dnsResource(database, context) {
   if (path === '/api/v1/dns/zones' && method === 'GET') {
     const items = [];
     const notes = [];
-    for (const bound of database.prepare('SELECT id,name FROM connections WHERE enabled=1').all()) {
+    for (const bound of database.prepare("SELECT id,name FROM connections WHERE enabled=1 AND (roles_json IS NULL OR EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value='dns'))").all()) {
       if (query.get('connectionId') && query.get('connectionId') !== bound.id) continue;
       try {
         const { adapter } = adapterFor(database, context, bound.id);
@@ -24,6 +24,8 @@ export async function dnsResource(database, context) {
     requireValue(separator > 0, 'Invalid zone ID');
     const connectionId = zoneId.slice(0, separator);
     const remoteId = zoneId.slice(separator + 1);
+    const bound = database.prepare('SELECT roles_json FROM connections WHERE id=?').get(connectionId);
+    requireValue(!bound?.roles_json || JSON.parse(bound.roles_json).includes('dns'), 'DNS is disabled for this connection', 409);
     const { adapter } = adapterFor(database, context, connectionId);
     const domain = (await adapter.domains()).find((entry) => entry.remoteId === remoteId);
     requireValue(domain, 'Zone not found in the selected provider account', 404);
@@ -60,7 +62,7 @@ export async function dnsResource(database, context) {
       try {
         for (const item of registrations) {
           requireValue(typeof item.domain_name === 'string', 'Invalid registrar response', 502);
-          insert.run(`cf-${registrationMatch[1]}-${item.domain_name}`, item.domain_name, registrationMatch[1], item.expires_at || '', Number(item.auto_renew === true), JSON.stringify({ status: item.status, locked: item.locked }));
+          insert.run(`cf-${registrationMatch[1]}-${item.domain_name}`, item.domain_name, registrationMatch[1], item.expires_at || '', Number(item.auto_renew === true), JSON.stringify({ status: item.status, locked: item.locked, registrar: true }));
         }
         audit(database, user, 'registrar.sync', registrationMatch[1]);
         database.exec('COMMIT');

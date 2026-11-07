@@ -8,3 +8,10 @@ node_modules/
 vault.key
 initial-admin-password
 .DS_Store
+frontend/node_modules/
+frontend/**/node_modules/
+frontend/**/dist/
+frontend/.turbo/
+!frontend/apps/web-antd/.env
+!frontend/apps/web-antd/.env.production
+!frontend/apps/web-antd/.env.development

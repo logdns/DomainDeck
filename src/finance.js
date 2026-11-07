@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { requireValue } from './errors.js';
 import { adapterFor } from './registry.js';
-import { audit, text, transaction } from './store.js';
+import { audit, saveSetting, text, transaction } from './store.js';
 
 export const paymentTypes = ['card', 'paypal', 'alipay', 'wechat', 'balance', 'bank', 'crypto', 'other'];
 
@@ -12,7 +12,8 @@ function normalize(body) {
   requireValue(!body.number && !body.cvv && !body.cvc && !body.password, 'Full payment credentials must not be stored');
   const last4 = String(body.last4 || body.account || '').replace(/\s/g, '');
   requireValue(body.type !== 'card' || /^\d{0,4}$/.test(last4), 'Store only the last four card digits');
-  return { name, type: body.type, last4: body.type === 'card' ? last4 : text(last4, 200), holder: text(body.holder || '', 100), expiry: text(body.expiry || '', 20), notes: text(body.notes || '', 1000) };
+  requireValue(!body.status || ['active', 'disabled'].includes(body.status), 'Invalid payment status');
+  return { name, type: body.type, status: body.status || 'active', last4: body.type === 'card' ? last4 : text(last4, 200), holder: text(body.holder || '', 100), expiry: text(body.expiry || '', 20), notes: text(body.notes || '', 1000) };
 }
 
 export async function financeResource(database, context) {
@@ -73,7 +74,7 @@ export async function financeResource(database, context) {
         if (kind === 'payments') {
           for (const item of Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [data]) {
             const last4 = String(item.last4 || item.card_number || item.account || '').replace(/\D/g, '').slice(-4);
-            results.push({ connectionId: bound.id, connectionName: bound.name, source: bound.provider_ref || bound.provider, type: 'card', last4, expiry: item.expiry || (item.card_expiry_year ? `${item.card_expiry_year}-${String(item.card_expiry_month).padStart(2, '0')}` : ''), editable: false });
+            if (last4) results.push({ id: `synced-${bound.id}-${results.length}`, name: `${bound.name} · ${last4}`, connectionId: bound.id, connectionName: bound.name, source: bound.provider_ref || bound.provider, type: 'card', last4, expiry: item.expiry || (item.card_expiry_year ? `${item.card_expiry_year}-${String(item.card_expiry_month).padStart(2, '0')}` : ''), editable: false });
           }
         } else if (kind === 'balance') results.push({ connectionId: bound.id, connectionName: bound.name, amount: data.balance ?? data.amount, currency: data.currency || 'USD', display: data.display || '' });
         else {
@@ -81,6 +82,8 @@ export async function financeResource(database, context) {
         }
       } catch { notes.push({ connectionId: bound.id, connectionName: bound.name, message: 'Not exposed by provider or request rejected' }); }
     }
-    return { items: results, notes };
+    const result = { items: results, notes, syncedAt: new Date().toISOString() };
+    if (kind === 'payments') saveSetting(database, 'synced-payments', result);
+    return result;
   }
 }

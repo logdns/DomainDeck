@@ -62,7 +62,7 @@ export class Provider {
     });
     const result = response.status === 204 ? {} : await jsonResponse(response);
     if (!response.ok || (!spaceship && (porkbun ? result.status !== 'SUCCESS' : result.success !== true))) {
-      throw new Error('Provider rejected request; verify API access and permissions');
+      throw new HttpError(502, `${this.provider} API returned HTTP ${response.status}; verify credentials, API access and required permissions`);
     }
     if (spaceship && response.status === 202) return { ...result, operationId: response.headers.get('spaceship-async-operationid'), accepted: true };
     return result;
@@ -101,7 +101,7 @@ export class Provider {
       const result = [];
       for (let skip = 0; skip < 100000; skip += 100) {
         const data = await this.request(`/dns/records/${encodeURIComponent(domain.name)}?take=100&skip=${skip}`);
-        result.push(...(data.items || []).map((item) => ({ ...item, id: createHash('sha256').update(JSON.stringify(item)).digest('hex'), raw: item, content: item.address || item.value || item.cname || item.exchange || item.nameserver || item.target || '', name: item.name || item.host || '@' })));
+        result.push(...(data.items || []).map((item) => ({ ...item, id: createHash('sha256').update(JSON.stringify(item)).digest('hex'), raw: item, content: item.address || item.value || item.cname || item.exchange || item.nameserver || item.target || item.aliasName || item.pointer || '', priority: item.priority ?? item.preference, name: item.type === 'SRV' ? `${item.service}.${item.protocol}${item.name && item.name !== '@' ? `.${item.name}` : ''}` : item.name || item.host || '@' })));
         if (!(data.items || []).length || result.length >= data.total || data.items.length < 100) return result;
       }
       throw new Error('Provider pagination limit exceeded');
@@ -132,25 +132,33 @@ export class Provider {
       requireValue(!id, 'Spaceship editing requires creating a replacement and deleting the old record', 409);
       const type = String(input.type || '').toUpperCase();
       const host = String(input.name || '@');
-      const content = String(input.content || '');
+      const content = String(input.content || input.target || input.value || '');
       const ttl = Number(input.ttl || 600);
-      requireValue(['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'SRV', 'CAA'].includes(type) && content.length > 0 && content.length <= 4096 && host.length <= 253 && !/[\s/]/.test(host) && Number.isInteger(ttl) && ttl >= 60 && ttl <= 86400, 'Invalid DNS record');
-      const valueField = { A: 'address', AAAA: 'address', CNAME: 'cname', TXT: 'value', MX: 'exchange', NS: 'nameserver', SRV: 'target', CAA: 'value' }[type];
+      requireValue(['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'SRV', 'CAA', 'ALIAS', 'PTR'].includes(type) && content.length > 0 && content.length <= 4096 && host.length <= 253 && !/[\s/]/.test(host) && Number.isInteger(ttl) && ttl >= 60 && ttl <= 86400, 'Invalid DNS record');
+      const valueField = { A: 'address', AAAA: 'address', CNAME: 'cname', TXT: 'value', MX: 'exchange', NS: 'nameserver', SRV: 'target', CAA: 'value', ALIAS: 'aliasName', PTR: 'pointer' }[type];
       const item = { type, name: host, ttl, [valueField]: content };
-      if (['MX', 'SRV'].includes(type)) item.priority = Number(input.priority || 0);
-      if (type === 'SRV') { item.weight = Number(input.weight || 0); item.port = Number(input.port || 0); }
-      if (type === 'CAA') { item.flag = Number(input.flag || 0); item.tag = String(input.tag || 'issue'); }
-      for (const field of ['priority', 'weight', 'port', 'flag']) if (item[field] !== undefined) requireValue(Number.isInteger(item[field]) && item[field] >= 0 && item[field] <= 65535, 'Invalid structured DNS field');
+      if (type === 'MX') item.preference = Number(input.priority ?? input.preference ?? 0);
+      if (type === 'SRV') {
+        const labels = /^(_[a-z\d-]+)\.(_[a-z\d-]+)(?:\.(.+))?$/i.exec(host);
+        requireValue(labels, 'SRV name must start with _service._protocol');
+        item.service = labels[1]; item.protocol = labels[2]; item.name = labels[3] || '@';
+        item.priority = Number(input.priority || 0); item.weight = Number(input.weight || 0); item.port = Number(input.port || 0);
+        requireValue(item.port >= 1, 'SRV port required');
+      }
+      if (type === 'CAA') { item.flag = Number(input.flag ?? input.flags ?? 0); item.tag = String(input.tag || 'issue'); }
+      for (const field of ['priority', 'preference', 'weight', 'port', 'flag']) if (item[field] !== undefined) requireValue(Number.isInteger(item[field]) && item[field] >= 0 && item[field] <= 65535, 'Invalid structured DNS field');
       if (type === 'CAA') requireValue(item.flag <= 255 && /^[a-z0-9-]{1,32}$/i.test(item.tag), 'Invalid CAA fields');
       return this.request(path, 'PUT', { force: input.force === true, items: [item] });
     }
     if (id && !/^[a-zA-Z0-9]+$/.test(id)) throw new Error('Invalid record ID');
     const type = String(input.type || '').toUpperCase();
     const name = String(input.name ?? '');
-    const content = String(input.content ?? '');
+    const structured = input.data || {};
+    const content = String(input.content ?? structured.target ?? structured.value ?? structured.certificate ?? '');
     const ttl = Number(input.ttl || 600);
-    if (!remove && (!['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA'].includes(type) || name.length > 253 || /[\s/]/.test(name) || !content || content.length > 4096 || !Number.isInteger(ttl) || (ttl !== 1 && (ttl < 60 || ttl > 86400)))) throw new Error('Invalid DNS record');
-    const priority = Number(input.priority ?? 0);
+    const allowed = this.provider === 'cloudflare' ? ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA', 'PTR', 'TLSA', 'HTTPS', 'SVCB'] : ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV', 'CAA'];
+    if (!remove && (!allowed.includes(type) || name.length > 253 || /[\s/]/.test(name) || !content || content.length > 4096 || !Number.isInteger(ttl) || (ttl !== 1 && (ttl < 60 || ttl > 86400)))) throw invalid('Invalid DNS record');
+    const priority = Number(input.priority ?? structured.priority ?? 0);
     if (!Number.isInteger(priority) || priority < 0 || priority > 65535) throw new Error('Invalid priority');
     if (this.provider === 'porkbun') {
       let relative = name === '@' || name === domain.name ? '' : name;
@@ -163,11 +171,19 @@ export class Provider {
     let data;
     if (type === 'SRV') {
       const labels = fullName.split('.');
-      data = { service: labels[0], proto: labels[1], name: labels.slice(2).join('.'), priority, weight: Number(input.weight || 0), port: Number(input.port || 0), target: content };
+      data = { service: labels[0], proto: labels[1], name: labels.slice(2).join('.'), priority, weight: Number(input.weight ?? structured.weight ?? 0), port: Number(input.port ?? structured.port ?? 0), target: content };
       requireValue(/^_[a-z0-9-]+$/i.test(data.service) && /^_(tcp|udp|tls)$/i.test(data.proto) && Number.isInteger(data.port) && data.port >= 0 && data.port <= 65535 && Number.isInteger(data.weight) && data.weight >= 0 && data.weight <= 65535, 'Invalid SRV fields');
     }
-    if (type === 'CAA') data = { flags: Number(input.flag || 0), tag: String(input.tag || 'issue'), value: content };
+    if (type === 'CAA') data = { flags: Number(input.flag ?? structured.flags ?? 0), tag: String(input.tag ?? structured.tag ?? 'issue'), value: content };
     if (type === 'CAA' && !remove) requireValue(Number.isInteger(data.flags) && data.flags >= 0 && data.flags <= 255 && /^[a-z0-9-]{1,32}$/i.test(data.tag), 'Invalid CAA fields');
+    if (type === 'TLSA') {
+      data = { usage: Number(structured.usage), selector: Number(structured.selector), matching: Number(structured.matching), certificate: String(structured.certificate || '') };
+      if (!remove) requireValue([0, 1, 2, 3].includes(data.usage) && [0, 1].includes(data.selector) && [0, 1, 2].includes(data.matching) && /^[a-f\d]+$/i.test(data.certificate) && data.certificate.length % 2 === 0, 'Invalid TLSA fields');
+    }
+    if (['HTTPS', 'SVCB'].includes(type)) {
+      data = { priority, target: String(structured.target || '.'), value: String(structured.value || '') };
+      if (!remove) requireValue(data.target.length <= 253 && !/[\s/]/.test(data.target) && data.value.length <= 4096, 'Invalid HTTPS/SVCB fields');
+    }
     return this.request(`/zones/${domain.remote_id}/dns_records${id ? `/${id}` : ''}`, remove ? 'DELETE' : id ? 'PATCH' : 'POST', remove ? undefined : { type, name: fullName, ...(data ? { data } : { content }), ttl, ...(type === 'MX' ? { priority } : {}), ...(typeof input.proxied === 'boolean' && ['A', 'AAAA', 'CNAME'].includes(type) ? { proxied: input.proxied } : {}), ...(input.comment ? { comment: String(input.comment).slice(0, 500) } : {}) });
   }
 

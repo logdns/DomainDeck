@@ -66,3 +66,39 @@ test('Cloudflare registrar quote uses POST, DNS edits preserve proxy/comment and
   await provider.execute('purge', { zoneId: 'b'.repeat(32) });
   assert.deepEqual(calls[2].payload, { purge_everything: true });
 });
+
+test('Spaceship DNS forms map MX, SRV, ALIAS and PTR to official fields', async () => {
+  const calls = [];
+  const provider = new Provider('spaceship', { apiKey: 'fixture', apiSecret: 'fixture' }, async (url, options) => {
+    calls.push({ url, method: options.method, body: JSON.parse(options.body) });
+    return Response.json({});
+  });
+  const domain = { name: 'example.com' };
+  await provider.writeRecord(domain, { type: 'MX', name: '@', content: 'mail.example.com', priority: 10 });
+  await provider.writeRecord(domain, { type: 'SRV', name: '_sip._tcp.voip', target: 'sip.example.com', priority: 5, weight: 7, port: 5060 });
+  await provider.writeRecord(domain, { type: 'ALIAS', name: '@', content: 'edge.example.com' });
+  await provider.writeRecord(domain, { type: 'PTR', name: '1', content: 'host.example.com' });
+  assert.deepEqual(calls[0].body.items[0], { type: 'MX', name: '@', ttl: 600, exchange: 'mail.example.com', preference: 10 });
+  assert.deepEqual(calls[1].body.items[0], { type: 'SRV', name: 'voip', ttl: 600, target: 'sip.example.com', service: '_sip', protocol: '_tcp', priority: 5, weight: 7, port: 5060 });
+  assert.equal(calls[2].body.items[0].aliasName, 'edge.example.com');
+  assert.equal(calls[3].body.items[0].pointer, 'host.example.com');
+  assert.ok(calls.every((call) => call.method === 'PUT' && call.url === 'https://spaceship.dev/api/v1/dns/records/example.com'));
+});
+
+test('Cloudflare accepts Vben structured DNS fields without losing protocol-specific values', async () => {
+  const calls = [];
+  const provider = new Provider('cloudflare', { token: 'fixture', accountId: 'a'.repeat(32) }, async (url, options) => {
+    calls.push(JSON.parse(options.body));
+    return Response.json({ success: true, result: {} });
+  });
+  const domain = { name: 'example.com', remote_id: 'b'.repeat(32) };
+  await provider.writeRecord(domain, { type: 'SRV', name: '_sip._tcp', data: { priority: 10, weight: 5, port: 5060, target: 'sip.example.com' } });
+  await provider.writeRecord(domain, { type: 'CAA', name: '@', data: { flags: 128, tag: 'issue', value: 'letsencrypt.org' } });
+  await provider.writeRecord(domain, { type: 'TLSA', name: '_443._tcp', data: { usage: 3, selector: 1, matching: 1, certificate: 'abcd' } });
+  await provider.writeRecord(domain, { type: 'HTTPS', name: '@', data: { priority: 1, target: '.', value: 'alpn=h2' } });
+  assert.deepEqual(calls[0].data, { service: '_sip', proto: '_tcp', name: 'example.com', priority: 10, weight: 5, port: 5060, target: 'sip.example.com' });
+  assert.deepEqual(calls[1].data, { flags: 128, tag: 'issue', value: 'letsencrypt.org' });
+  assert.deepEqual(calls[2].data, { usage: 3, selector: 1, matching: 1, certificate: 'abcd' });
+  assert.deepEqual(calls[3].data, { priority: 1, target: '.', value: 'alpn=h2' });
+  await assert.rejects(provider.writeRecord(domain, { type: 'TLSA', name: '_443._tcp', data: { usage: 4, selector: 1, matching: 1, certificate: 'abcd' } }), /Invalid TLSA/);
+});

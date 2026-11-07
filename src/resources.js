@@ -105,13 +105,14 @@ export async function resource(database, context) {
     if (method === 'POST' && connectionMatch[2]) {
       const { adapter: provider } = adapterFor(database, context, connection.id);
       let assets;
-      try { assets = await provider.domains(); } catch { throw new HttpError(502, 'Provider request failed; check credentials, API access and permissions'); }
+      try { assets = await provider.domains(); } catch (error) { if (error instanceof HttpError && error.status === 502) throw error; throw new HttpError(502, 'Provider request failed; check credentials, API access and permissions'); }
       if (connectionMatch[2] === 'test') return { ok: true, domains: assets.length };
       database.exec('BEGIN IMMEDIATE');
       try {
         const insert = database.prepare(`INSERT INTO domains(id,name,connection_id,remote_id,expires_at,auto_renew,metadata_json) VALUES(?,?,?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET connection_id=excluded.connection_id,remote_id=excluded.remote_id,expires_at=CASE WHEN excluded.expires_at='' THEN domains.expires_at ELSE excluded.expires_at END, auto_renew=CASE WHEN (SELECT provider FROM connections WHERE id=excluded.connection_id)='cloudflare' THEN domains.auto_renew ELSE excluded.auto_renew END,metadata_json=CASE WHEN excluded.metadata_json='{}' THEN domains.metadata_json ELSE excluded.metadata_json END WHERE domains.connection_id IS NULL OR domains.connection_id=excluded.connection_id`);
         for (const item of assets) insert.run(randomUUID(), item.name, connection.id, item.remoteId, item.expiresAt, Number(item.autoRenew), JSON.stringify(item.metadata || {}));
         log('connection.sync', connection.name);
+        database.prepare('UPDATE connections SET last_sync_at=? WHERE id=?').run(new Date().toISOString(), connection.id);
         database.exec('COMMIT');
       } catch (error) { database.exec('ROLLBACK'); throw error; }
       return { ok: true, domains: assets.length };

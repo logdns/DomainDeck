@@ -15,7 +15,70 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Prepare locked frontend dependencies without running project scripts
+        run: |
+          docker pull node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553
+          mkdir -p "$RUNNER_TEMP/vben-work"
+          chmod 777 "$RUNNER_TEMP/vben-work"
+          docker run --rm --read-only --user 65534:65534 --cpus 2 --memory 3g --pids-limit 180 \
+            --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,size=128m \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/frontend,dst=/src,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/vben-work,dst=/work" --workdir /work \
+            --entrypoint /usr/bin/env node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 \
+            -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/work/home npm_config_cache=/work/npm-cache \
+            /bin/sh -ec 'mkdir -p app home; cp -R /src/. app/; npm install --prefix /work/tools pnpm@11.16.0 --ignore-scripts --no-audit --no-fund; cd app; node /work/tools/node_modules/pnpm/bin/pnpm.cjs install --ignore-scripts --frozen-lockfile; node /work/tools/node_modules/pnpm/bin/pnpm.cjs audit --prod --audit-level high'
+      - name: Isolated Vben type checks, tests and production build
+        run: |
+          docker run --rm --pull=never --network none --read-only --user 65534:65534 \
+            --cpus 2 --memory 3g --pids-limit 180 --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,size=128m \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/frontend,dst=/src,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/vben-work,dst=/work" --workdir /work/app \
+            --entrypoint /usr/bin/env node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 \
+            -i PATH=/work/tools/node_modules/.bin:/usr/local/bin:/usr/bin:/bin HOME=/work/home TMPDIR=/tmp NODE_OPTIONS=--max-old-space-size=2048 \
+            /usr/bin/timeout 300s /bin/sh -ec 'pnpm -r --if-present run stub; pnpm --filter @vben/web-antd typecheck; pnpm exec vitest run apps/web-antd/src/utils/__tests__; pnpm --filter @vben/web-antd build'
+          python3 - <<'PY'
+          import os, pathlib, stat
+          source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'vben-work/app/apps/web-antd/dist'
+          target = pathlib.Path('frontend-output')
+          target.mkdir()
+          total = 0
+          for item in source.rglob('*'):
+              assert not item.is_symlink()
+              if item.is_dir():
+                  continue
+              assert item.suffix in {'.html', '.js', '.css', '.svg', '.ico', '.png', '.woff', '.woff2', '.json'}
+              descriptor = os.open(item, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+              try:
+                  info = os.fstat(descriptor)
+                  assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size < 8 * 1024 * 1024
+                  data = os.read(descriptor, info.st_size + 1)
+                  assert len(data) == info.st_size
+              finally:
+                  os.close(descriptor)
+              total += len(data)
+              assert total < 24 * 1024 * 1024
+              destination = target / item.relative_to(source)
+              destination.parent.mkdir(parents=True, exist_ok=True)
+              destination.write_bytes(data)
+          assert (target / 'index.html').is_file()
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: vben-frontend
+          path: frontend-output/
+          if-no-files-found: error
+          retention-days: 14
+
   verify:
+    needs: frontend
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +89,10 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: vben-frontend
+          path: public/
       - name: Prepare pinned Node 24 toolchain
         run: docker pull node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553
       - name: Isolated tests, syntax checks and packaging
@@ -43,9 +110,9 @@ jobs:
             node:24-bookworm-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 \
             -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/scratch TMPDIR=/scratch \
             /usr/bin/timeout 120s /bin/sh -ec '
-              for file in src/*.js public/app.js scripts/*.js; do node --check "$file"; done
+              for file in src/*.js scripts/*.js; do node --check "$file"; done
               bash -n deploy/install.sh
-              node --test
+              node --test test/*.test.js
               node scripts/build.js /scratch/out
               cd /scratch/out
               sha256sum -c SHA256SUMS.txt
@@ -61,7 +128,7 @@ jobs:
               descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=output_descriptor)
               try:
                   info = os.fstat(descriptor)
-                  assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size < 4 * 1024 * 1024
+                  assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size < 32 * 1024 * 1024
                   data = os.read(descriptor, info.st_size + 1)
                   after = os.fstat(descriptor)
                   assert len(data) == info.st_size and (after.st_ino, after.st_size, after.st_mtime_ns) == (info.st_ino, info.st_size, info.st_mtime_ns)
@@ -85,9 +152,69 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  browser:
+    needs: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: vben-frontend
+          path: public/
+      - name: Prepare browser and automation dependencies
+        run: |
+          docker build -f scripts/Dockerfile.browser -t domaindeck-browser:node24 .
+          mkdir -p "$RUNNER_TEMP/browser-tools" "$RUNNER_TEMP/browser-output"
+          chmod 777 "$RUNNER_TEMP/browser-tools" "$RUNNER_TEMP/browser-output"
+          docker run --rm --read-only --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,size=128m --mount "type=bind,src=$RUNNER_TEMP/browser-tools,dst=/tools" \
+            --entrypoint /usr/bin/env domaindeck-browser:node24 -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp npm_config_cache=/tmp/npm-cache \
+            npm install --prefix /tools playwright@1.63.0 --ignore-scripts --no-audit --no-fund
+      - name: Isolated real browser integration
+        run: |
+          docker run --rm --pull=never --network none --read-only --user 65534:65534 \
+            --cpus 2 --memory 1g --pids-limit 180 --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /scratch:rw,exec,size=256m,mode=1777 --tmpfs /tmp:rw,exec,size=128m,mode=1777 \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/src,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/browser-tools,dst=/tools,readonly" \
+            --mount "type=bind,src=$RUNNER_TEMP/browser-output,dst=/out" --workdir /src \
+            --entrypoint /usr/bin/env domaindeck-browser:node24 -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/scratch TMPDIR=/tmp BROWSER_OUTPUT=/out \
+            /usr/bin/timeout 180s node scripts/browser-e2e.js
+      - name: Collect browser evidence
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, stat
+          source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'browser-output'
+          target = pathlib.Path('browser-evidence')
+          target.mkdir()
+          for name in ['login.png', 'overview.png', 'domains.png', 'dns.png', 'mobile.png', 'failure.png', 'result.json']:
+              if not (source / name).exists():
+                  continue
+              descriptor = os.open(source / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+              try:
+                  info = os.fstat(descriptor)
+                  assert stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and 0 < info.st_size < 8 * 1024 * 1024
+                  data = os.read(descriptor, info.st_size + 1)
+                  assert len(data) == info.st_size
+                  (target / name).write_bytes(data)
+              finally:
+                  os.close(descriptor)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: vben-browser-evidence
+          path: browser-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
   release:
     if: startsWith(github.ref, 'refs/tags/v3.')
-    needs: verify
+    needs: [verify, browser]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

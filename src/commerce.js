@@ -44,12 +44,12 @@ async function quote(adapter, name, years) {
 export async function commerceResource(database, context) {
   const { path, method, query, body, user } = context;
   const log = (action, target) => audit(database, user, action, target);
-  if (path === '/api/v1/registrars' && method === 'GET') return database.prepare('SELECT id,name,COALESCE(NULLIF(provider_ref,\'\'),provider) AS provider FROM connections WHERE enabled=1 ORDER BY is_default DESC,name').all();
+  if (path === '/api/v1/registrars' && method === 'GET') return database.prepare("SELECT id,name,COALESCE(NULLIF(provider_ref,''),provider) AS provider FROM connections WHERE enabled=1 AND (roles_json IS NULL OR EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value='registrar')) ORDER BY is_default DESC,name").all();
   if (method === 'GET' && ['/api/v1/availability', '/api/v1/transfer/quotes'].includes(path)) {
     const name = domainName(query.get('domain'));
     const years = Number(query.get('years') || 1);
     requireValue(Number.isInteger(years) && years >= 1 && years <= 10, 'Invalid term');
-    const connections = database.prepare('SELECT id,name,provider,provider_ref FROM connections WHERE enabled=1 ORDER BY is_default DESC,name').all();
+    const connections = database.prepare("SELECT id,name,provider,provider_ref FROM connections WHERE enabled=1 AND (roles_json IS NULL OR EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value='registrar')) ORDER BY is_default DESC,name").all();
     const quotes = [];
     for (const bound of connections.filter((row) => !query.get('connectionId') || row.id === query.get('connectionId'))) {
       try {
@@ -78,7 +78,8 @@ export async function commerceResource(database, context) {
       return { order: orderView(prior), replay: true };
     }
     requireValue(!database.prepare("SELECT id FROM orders WHERE connection_id=? AND domain=? AND kind=? AND status IN ('submitting','pending','needs-review') LIMIT 1").get(connectionId, name, billingKind), 'An unresolved order already exists for this domain. Reconcile it before creating another purchase.', 409);
-    const { adapter } = adapterFor(database, context, connectionId);
+    const { adapter, bound } = adapterFor(database, context, connectionId);
+    requireValue(!bound.roles_json || JSON.parse(bound.roles_json).includes('registrar'), 'This connection is configured for DNS only', 409);
     requireValue(adapter.provider !== 'cloudflare', 'Cloudflare purchases must be completed in its dashboard', 409);
     requireValue(!adapter.manifest || adapter.manifest.ops[billingKind] && adapter.manifest.capabilities?.[billingKind] !== false, 'This provider does not expose that purchase operation', 409);
     const contacts = { ...setting(database, 'contacts'), ...(body.contacts || {}) };
@@ -141,7 +142,7 @@ export async function commerceResource(database, context) {
   const transferMatch = /^\/api\/v1\/transfer\/([a-zA-Z0-9_.-]+)$/.exec(path);
   if (transferMatch && method === 'GET') {
     const name = domainName(transferMatch[1]);
-    const connectionId = query.get('connectionId') || database.prepare('SELECT connection_id FROM domains WHERE name=?').get(name)?.connection_id;
+    const connectionId = query.get('connectionId') || database.prepare('SELECT connection_id FROM domains WHERE name=?').get(name)?.connection_id || database.prepare("SELECT connection_id FROM orders WHERE domain=? AND kind='transfer' ORDER BY created_at DESC LIMIT 1").get(name)?.connection_id;
     return (await adapterFor(database, context, connectionId).adapter.execute('transferInfo', { domain: name })).result;
   }
   const operationMatch = /^\/api\/v1\/operations\/([a-zA-Z0-9_-]+)$/.exec(path);

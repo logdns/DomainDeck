@@ -100,9 +100,11 @@ sudo systemctl start domaindeck-node
 
 ## 在线更新
 
+**从 beta.1–beta.5 首次升级到 beta.6，必须下载完整程序包重新运行 `deploy/install.sh`。** 旧更新器只认识三个固定静态文件，不能接收 Vben 多文件 bundle。服务器安装不编译前端，完整包内已含构建结果。保留原数据目录与 `/etc/domaindeck-node.env`；请先停服备份数据。beta.6 启动时事务升级 schema 6，降级需要同时恢复匹配的旧数据库。
+
 后台「版本与设置」检查 `logdns/DomainDeck` 的 Node 3.x Release。仅同意 GitHub 返回的 SHA-256 摘要，缺少摘要或不匹配时拒绝更新。仅允许 HTTPS GitHub 及其发布资源域的下载和重定向。
 
-更新 bundle 只允许 `src/*.js`、三个固定 `public` 文件和 `package.json`；拒绝目录穿越、重复路径、不一致版本和超限内容。写入新版本目录前校验摘要，更新前生成一致的 SQLite 备份，然后原子切换 `current` 软链接。服务优雅退出，由 systemd 自动重启。数据和 vault key 留在原路径。
+beta.6 更新 bundle 允许 `src/*.js`、`package.json` 和受限 `public` 静态资源路径（js/jse/css/assets）；拒绝目录穿越、重复路径、非规范 base64、不一致版本、缺失入口引用和超限内容。写入新版本目录前校验摘要，更新前生成一致的 SQLite 备份，然后原子切换 `current` 软链接。服务优雅退出，由 systemd 自动重启。数据和 vault key 留在原路径。
 
 当前测试版不包含自动健康回滚。若新版启动失败，使用旧版本软链接回滚；如发生 schema 变更需同时恢复对应数据库备份：
 

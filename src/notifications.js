@@ -136,12 +136,13 @@ export async function notificationResource(database, context) {
     requireValue(Array.isArray(expiryDays) && expiryDays.length > 0 && expiryDays.length <= 20 && expiryDays.every((value) => Number.isInteger(value) && value > 0 && value <= 365), 'Invalid expiry thresholds');
     requireValue(!body.channels || Array.isArray(body.channels) && body.channels.length <= 20, 'Invalid channels');
     transaction(database, () => {
-      saveSetting(database, 'notifications', { enabled: body.enabled === true, expiryDays: [...new Set(expiryDays)], notifyOnRenew: body.notifyOnRenew === true || body.rules?.notifyOnRenew === true });
+      saveSetting(database, 'notifications', { enabled: body.enabled === true, expiryDays: [...new Set(expiryDays)], notifyOnRenew: (body.notifyOnRenew ?? body.rules?.notifyOnRenew ?? setting(database, 'notifications').notifyOnRenew) === true });
       if (body.channels) {
         const preserved = new Set();
         for (const channel of body.channels) {
           const old = channel.id ? database.prepare('SELECT * FROM notification_channels WHERE id=?').get(channel.id) : null;
-          const config = Object.fromEntries(Object.entries({ ...(old?.type === channel.type ? decrypt(context.key, old.config) : {}), ...(channel.config || {}) }).filter(([field]) => channelFields[channel.type]?.includes(field)));
+          const previous = old?.type === channel.type ? decrypt(context.key, old.config) : {};
+          const config = Object.fromEntries(Object.entries({ ...previous, ...Object.fromEntries(Object.entries(channel.config || {}).filter(([field, value]) => !previous[field] || value !== '')) }).filter(([field]) => channelFields[channel.type]?.includes(field)));
           validateChannel(channel.type, config);
           const id = old?.id || randomUUID();
           database.prepare('INSERT INTO notification_channels VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,type=excluded.type,enabled=excluded.enabled,config=excluded.config').run(id, text(channel.name || channel.type, 100), channel.type, Number(channel.enabled !== false), encrypt(context.key, config));
