@@ -2,7 +2,20 @@
 
 ## 安装
 
-需要 Linux/systemd 和 Node.js 24（SQLite 内置模块）。包不携带 Node 运行时，不需要 npm 依赖安装。解压官方 Release 后运行 `sudo bash deploy/install.sh`。默认端口为 4781，与历史 Go 版本的 4780 分开。
+需要 Linux/systemd，应用使用 Node.js 24 的 SQLite 内置模块，不需要 npm 依赖安装。解压官方 Release 后运行 `sudo bash deploy/install.sh`。beta.4 起，安装器检测现有 Node 24（包含宝塔安装目录），缺失时下载官方固定版本 24.22.2，以内置的 x64/ARM64 SHA-256 校验后仅提取 Node 可执行文件。独立运行时安装在 `/opt/domaindeck-node/runtime/node`，不覆盖系统 Node。默认端口为 4781，与历史 Go 版本的 4780 分开。
+
+下载需要公网访问 nodejs.org，系统需提供 curl、CA 证书、tar、gzip、sha256sum。Ubuntu/Debian 可用 `apt-get install -y curl ca-certificates tar gzip coreutils`；RHEL 系列使用对应包管理器。官方 Node 24 要求 glibc >= 2.28 和兼容的 libstdc++；运行时不可用会中止，不切换应用或修改原数据。CentOS 7 等过旧系统需要升级系统。
+
+```sh
+# 自动寻找或下载独立运行时
+sudo bash deploy/install.sh
+# 指定宝塔已有的 Node 24，禁止下载
+sudo bash deploy/install.sh --node /www/server/nodejs/v24.22.2/bin/node --no-download
+# 只检查现有运行时，不下载或修改文件
+bash deploy/install.sh --check
+```
+
+安装器验证 Node 主版本和内存 SQLite 实例后才写入应用，systemd 使用绝对运行时路径，关闭自动端口切换；启动后检查健康接口版本及服务活跃状态，失败返回非零并提示 journalctl。容器中没有正在运行的 systemd 时应直接运行 `node src/cli.js` 并挂载持久化数据目录。
 
 服务名称 `domaindeck-node`，运行用户 `domaindeck-node`。程序目录 `/opt/domaindeck-node/current` 指向一个版本目录。数据库、加密密钥和随机初始密码在 `/var/lib/domaindeck-node`。随机密码不打印在日志内，文件权限 0600。
 

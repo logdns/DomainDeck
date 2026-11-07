@@ -1,6 +1,8 @@
-# DomainDeck 3.0.0-beta.3
+# DomainDeck 3.0.0-beta.4
 
 Node.js 24 + SQLite 的旧版功能迁移测试版，无 npm 依赖、无需前端编译。
+
+本版修复安装失败：原安装器遇到 PATH 中非 Node 24 时直接退出。新版支持检测宝塔 Node、`--node` 指定路径、`--check` 预检和 `--no-download` 离线安装；缺少合适运行时时，下载官方 Node 24.22.2 并校验内置 SHA-256。运行时独立存放，不替换服务器原 Node。安装后验证服务健康与版本，端口冲突不再自动切换。新增安装流程、数据保留、运行时解压及校验失败回归测试。
 
 本版补全：旧声明式服务商模板与认证/价格/DNS 映射；无报价续费确认；原权限范围及通知发送历史迁移；订单支付关联；隔离演示、命令行参数、自动端口和浏览器启动；概览财务/活动、批量接入同步/测试、运行状态、支付校验、单笔订单同步、权限勾选和通知字段表单。Spaceship 同步保留注册/NS/状态，DNS 查询支持服务标签与公网解析器。非管理员不能创建或修改管理员、重置管理员密码或删除管理员。
 
@@ -14,7 +16,7 @@ Node.js 24 + SQLite 的旧版功能迁移测试版，无 npm 依赖、无需前�
 
 ## 下载与使用
 
-`DomainDeck-node-linux.tar.gz` 是两种架构通用的程序源码包，需要 Node.js 24。解压后 `sudo bash deploy/install.sh`，服务监听 127.0.0.1:4781。初始管理员 `admin`，密码位于 `/var/lib/domaindeck-node/initial-admin-password`。
+`DomainDeck-node-linux.tar.gz` 是两种架构通用的程序源码包。解压后 `sudo bash deploy/install.sh`，自动准备 Node.js 24，服务监听 127.0.0.1:4781。初始管理员 `admin`，密码位于 `/var/lib/domaindeck-node/initial-admin-password`。安装器下载需要 curl/CA/tar/gzip/sha256sum，官方 Node 需要兼容 glibc/libstdc++；也支持 `--node /absolute/path/to/node24 --no-download`。安装器修复通过此完整包提供，在线更新 bundle 仅更新运行程序。
 
 `DomainDeck-node.bundle.json` 供后台在线更新使用。`SHA256SUMS.txt` 用于完整性校验。beta.1/beta.2 可直接更新，启动时事务升级 schema 5，已有账户及加密接入不重置。降级需同时恢复更新前数据库备份。无需真实凭据可运行 `node src/cli.js --demo --addr 127.0.0.1:0`，按终端提示读取隔离目录中的随机密码。桌面使用 Node + 系统浏览器，不提供自包含 Go 外壳。
 

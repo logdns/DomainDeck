@@ -2,7 +2,7 @@
 
 独立重构的 **Node.js 24 + SQLite** 域名工作台。无 npm 运行依赖、无需前端编译，包含蓝色品牌、大字体、响应式布局、中英文和深色模式。
 
-这是 `3.0.0-beta.3` 公开测试版，迁入旧版账户与角色、域名交易、DNS、支付台账、通知、自定义注册商和离线数据迁移。本版补齐声明式服务商兼容、隔离演示、命令行启动、原权限范围和通知发送历史。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
+这是 `3.0.0-beta.4` 公开测试版，迁入旧版账户与角色、域名交易、DNS、支付台账、通知、自定义注册商和离线数据迁移。本版修复安装器遇到旧 Node 时直接退出的问题，自动准备独立 Node 24 运行时。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
 
 ## 功能
 
@@ -55,9 +55,13 @@ sudo systemctl status domaindeck-node
 sudo cat /var/lib/domaindeck-node/initial-admin-password
 ```
 
-安装器需要 Linux/systemd、root 和预先安装的 Node.js 24；不会下载软件。使用 `/opt/domaindeck-node`、`/var/lib/domaindeck-node` 和独立服务 `domaindeck-node`，监听 `127.0.0.1:4781`，以便与旧服务并行。关闭浏览器和 SSH 后服务继续运行，开机自动启动。
+安装器需要 Linux/systemd、root。自动寻找可用的 Node.js 24（包括宝塔 `/www/server/nodejs/v24*/bin/node`）；未找到时从 nodejs.org 下载固定版本 **24.22.2** 并核对内置 SHA-256，支持 Linux x64/ARM64。不更改系统 Node 或宝塔其他应用。运行时固定放在 `/opt/domaindeck-node/runtime/node`。下载需要 curl、CA 证书、tar、gzip、sha256sum；官方二进制需要 glibc >= 2.28 和兼容的 libstdc++。
 
-Node 必须安装到服务用户可执行的系统路径（例如 `/usr/bin/node`），不使用 root 家目录内的 nvm。反向代理目标为 `http://127.0.0.1:4781`，保留原始 `Host`，启用 HTTPS；不需要 CORS。
+可指定 Node：`sudo bash deploy/install.sh --node /www/server/nodejs/v24.22.2/bin/node`。离线安装使用 `--node /path/to/node24 --no-download`；`bash deploy/install.sh --check` 只检查现有运行时，不下载、不写文件。
+
+使用 `/opt/domaindeck-node`、`/var/lib/domaindeck-node` 和独立服务 `domaindeck-node`，监听 `127.0.0.1:4781`。启动检查通过才报告成功，端口占用会报错而不更换端口。关闭浏览器和 SSH 后服务继续运行，开机自动启动。
+
+服务使用独立复制的 Node 二进制；指定 nvm/宝塔路径时先验证版本和 SQLite 功能再复制。反向代理目标为 `http://127.0.0.1:4781`，保留原始 `Host`，启用 HTTPS；不需要 CORS。
 
 ## 更新与迁移
 
