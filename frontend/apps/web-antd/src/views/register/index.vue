@@ -5,6 +5,7 @@ import { useAccess } from '@vben/access';
 import Page from '#/components/deck-page.vue';
 
 import {
+  Alert,
   Button,
   Card,
   Descriptions,
@@ -35,6 +36,7 @@ const canBill = computed(() => hasAccessByCodes(['domain:billing']));
 const keyword = ref('');
 const loading = ref(false);
 const result = ref<any>(null);
+const normalizedNotice = ref('');
 const registrarId = ref<string | undefined>();
 // 每家接入各给一份报价，前端逐行展示、可按行选择下单对象
 const quotes = computed<any[]>(() => result.value?.quotes || []);
@@ -59,6 +61,9 @@ const selectedRegistrar = computed(() =>
 // Porkbun 这类用账户自带联系人，不需要填联系人 ID
 const needsContact = computed(
   () => selectedQuote.value?.capabilities?.requiresContact !== false,
+);
+const cloudflareRegistrar = computed(
+  () => selectedRegistrar.value?.provider === 'cloudflare',
 );
 
 const modalOpen = ref(false);
@@ -91,7 +96,7 @@ const availabilityMap: Record<string, { color: string; text: string }> = {
   available: { color: 'green', text: '可以注册' },
   taken: { color: 'orange', text: '已被注册' },
   invalidDomainName: { color: 'red', text: '域名格式无效' },
-  tldNotSupported: { color: 'default', text: '暂不支持该后缀' },
+  tldNotSupported: { color: 'gold', text: 'Cloudflare API 暂不支持该后缀' },
   unexpectedError: { color: 'red', text: '查询失败' },
 };
 
@@ -126,19 +131,24 @@ function chooseAndRegister(q: any) {
 }
 
 async function search() {
-  const domain = keyword.value
+  const raw = keyword.value
     .trim()
     .toLowerCase()
     .replace(/^https?:\/\//, '')
     .replace(/\/.*$/, '');
-  if (!domain) {
+  if (!raw) {
     message.warning('请输入要查询的域名');
     return;
   }
+  const knownSuffixes: [string, string][] = [['comcn', 'com.cn'], ...['com', 'net', 'org', 'io', 'dev', 'app', 'cn', 'xyz', 'info', 'biz', 'me', 'co', 'ai', 'top', 'site', 'online', 'tech', 'shop', 'cloud', 'uk', 'us'].map((item): [string, string] => [item, item])];
+  const suffix = knownSuffixes.find(([item]) => raw.endsWith(item) && raw.length > item.length);
+  const domain = raw.includes('.') ? raw : suffix ? `${raw.slice(0, -suffix[0].length)}.${suffix[1]}` : `${raw}.com`;
+  normalizedNotice.value = domain !== raw ? `输入未包含完整后缀，已按 ${domain} 查询；下单前请核对完整域名。` : '';
   loading.value = true;
   result.value = null;
   try {
     result.value = await checkAvailability(domain);
+    keyword.value = (result.value as any).domain || domain;
     const list = (result.value as any)?.quotes || [];
     const usable = list.filter((q: any) => !q.error);
     registrarId.value = (
@@ -240,6 +250,13 @@ function money(v: null | { amount: string; currency: string }) {
           >一次查一个域名，逐家注册商实时报价</span
         >
       </div>
+      <Alert
+        v-if="normalizedNotice"
+        class="mt-3"
+        show-icon
+        type="warning"
+        :message="normalizedNotice"
+      />
     </Card>
 
     <Spin :spinning="loading">
@@ -248,9 +265,7 @@ function money(v: null | { amount: string; currency: string }) {
           <div class="flex flex-wrap items-center gap-2">
             <span class="font-mono text-base">{{ result.domain }}</span>
             <Tag :color="status.color" class="mr-0">{{ status.text }}</Tag>
-            <Tag v-if="result.zone" color="cyan" class="mr-0"
-              >已在 Cloudflare</Tag
-            >
+            <Tag v-if="result.zone" color="cyan" class="mr-0">Cloudflare DNS 区域已存在</Tag>
             <Tag v-if="quotes.length > 1" class="mr-0"
               >{{ quotes.length }} 家注册商报价</Tag
             >
@@ -345,7 +360,7 @@ function money(v: null | { amount: string; currency: string }) {
                     v-else-if="q.availability?.result !== 'available'"
                     size="small"
                     disabled
-                    >已被注册</Button
+                    >{{ q.availability?.result === 'tldNotSupported' ? '后缀暂不支持' : q.availability?.result === 'unexpectedError' ? '无法确认' : '已被注册' }}</Button
                   >
                   <Button
                     v-else-if="!canBill"
@@ -371,8 +386,7 @@ function money(v: null | { amount: string; currency: string }) {
           v-if="quotes.some((q) => !q.capabilities?.register)"
           class="mt-3 text-xs text-slate-400"
         >
-          部分注册商（如
-          Cloudflare）的注册接口仍在灰度，只能查询价格，不能直接下单。
+          Cloudflare Registrar API 仅支持 API 开放的后缀；不提供 WHOIS 查询，改用其实时可注册性与价格检查接口。新注册目前按一年提交，续费仍需在 Cloudflare 后台处理。
         </div>
       </Card>
 
@@ -436,12 +450,13 @@ function money(v: null | { amount: string; currency: string }) {
             <InputNumber
               v-model:value="form.years"
               :min="1"
-              :max="10"
+              :max="cloudflareRegistrar ? 1 : 10"
+              :disabled="cloudflareRegistrar"
               size="small"
             />
             年
           </DescriptionsItem>
-          <DescriptionsItem label="WHOIS 隐私">
+          <DescriptionsItem v-if="!cloudflareRegistrar" label="注册信息隐私">
             <Select
               v-model:value="form.privacyLevel"
               size="small"
@@ -451,6 +466,9 @@ function money(v: null | { amount: string; currency: string }) {
                 { label: '公开', value: 'public' },
               ]"
             />
+          </DescriptionsItem>
+          <DescriptionsItem v-if="cloudflareRegistrar" :span="2">
+            Cloudflare 使用账户中已配置的注册联系人和默认隐私设置；请先在 Cloudflare 控制台确认。
           </DescriptionsItem>
           <DescriptionsItem label="自动续费" :span="2">
             <Switch

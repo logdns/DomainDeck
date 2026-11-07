@@ -10,6 +10,17 @@ export function domainName(value) {
   return name;
 }
 
+export function searchDomainName(value) {
+  if (typeof value !== 'string') throw invalid('Invalid domain');
+  let name = value.trim().toLowerCase().replace(/^https?:\/\//, '').split(/[/?#]/, 1)[0];
+  if (!name.includes('.')) {
+    const commonTlds = [['comcn', 'com.cn'], ...['online', 'cloud', 'shop', 'tech', 'info', 'site', 'xyz', 'com', 'net', 'org', 'io', 'dev', 'app', 'cn', 'biz', 'me', 'co', 'ai', 'top', 'uk', 'us'].map((suffix) => [suffix, suffix])];
+    const tld = commonTlds.find(([suffix]) => name.endsWith(suffix) && name.length > suffix.length);
+    name = tld ? `${name.slice(0, -tld[0].length)}.${tld[1]}` : `${name}.com`;
+  }
+  return domainName(name);
+}
+
 export function dnsName(value) {
   if (typeof value !== 'string') throw invalid('Invalid DNS name');
   const name = value.toLowerCase().replace(/\.$/, '');
@@ -90,7 +101,7 @@ export class Provider {
     const result = [];
     for (let page = 1; page <= 1000; page += 1) {
       const data = await this.request(`/zones?account.id=${this.credentials.accountId}&per_page=50&page=${page}`);
-      for (const item of data.result || []) result.push({ name: domainName(item.name), remoteId: item.id, expiresAt: '', autoRenew: false });
+      for (const item of data.result || []) result.push({ name: domainName(item.name), remoteId: item.id, expiresAt: '', autoRenew: false, metadata: { status: item.status || '', nameservers: item.name_servers || [] } });
       if (page >= (data.result_info?.total_pages || 1)) return result;
     }
     throw new Error('Provider pagination limit exceeded');
@@ -188,7 +199,8 @@ export class Provider {
   }
 
   async execute(operation, variables = {}) {
-    const name = variables.domain ? encodeURIComponent(domainName(variables.domain)) : '';
+    const operationDomain = this.provider === 'cloudflare' && operation === 'operation' ? variables.operationId : variables.domain;
+    const name = operationDomain ? encodeURIComponent(domainName(operationDomain)) : '';
     const input = variables.input || {};
     const years = variables.years || 1;
     requireValue(Number.isInteger(years) && years >= 1 && years <= 10, 'Years must be between 1 and 10');
@@ -247,14 +259,31 @@ export class Provider {
       getDomain: ['GET', `${account}/registrar/registrations/${name}`],
       availability: ['POST', `${account}/registrar/domain-check`, { domains: [variables.domain] }],
       pricing: ['POST', `${account}/registrar/domain-check`, { domains: [variables.domain] }],
+      register: ['POST', `${account}/registrar/registrations`, { domain_name: variables.domain, auto_renew: input.autoRenew === true }],
+      transfer: ['POST', `${account}/registrar/registrations/${name}/transfer-in`, { ...(input.authCode && !variables.domain.endsWith('.uk') ? { auth_code: Buffer.from(input.authCode, 'utf8').toString('base64') } : {}), ...(input.contactExtensions ? { contact_extensions: input.contactExtensions } : {}), auto_renew: input.autoRenew === true }],
+      transferInfo: ['GET', `${account}/registrar/registrations/${name}/transfer-in-status`],
+      operation: ['GET', `${account}/registrar/registrations/${name}/${variables.kind === 'transfer' ? 'transfer-in-status' : 'registration-status'}`],
       setAutoRenew: ['PATCH', `${account}/registrar/registrations/${name}`, { auto_renew: variables.isEnabled }],
       setTransferLock: ['PATCH', `${account}/registrar/registrations/${name}`, { locked: variables.isLocked }],
       payments: ['GET', `${account}/billing/profile`], invoices: ['GET', `${account}/billing/history?per_page=50`],
       purge: ['POST', `/zones/${encodeURIComponent(variables.zoneId || '')}/purge_cache`, { purge_everything: true }],
     };
+    if (operation === 'transferPreflight') {
+      const zoneResponse = await this.request(`/zones?name=${encodeURIComponent(variables.domain)}&account.id=${this.credentials.accountId}&per_page=1`);
+      const zone = zoneResponse.result?.find((item) => item.name?.toLowerCase() === String(variables.domain).toLowerCase());
+      if (!zone) return { raw: zoneResponse, result: { ready: false, reason: 'Add this domain as a Cloudflare zone first.' } };
+      if (zone.status !== 'active') return { raw: zoneResponse, result: { ready: false, reason: 'The Cloudflare zone must be active before transfer.' } };
+      const dnssec = await this.request(`/zones/${encodeURIComponent(zone.id)}/dnssec`);
+      if (dnssec.result?.status !== 'disabled') return { raw: dnssec, result: { ready: false, reason: 'Disable DNSSEC at the current registrar and wait for the Cloudflare zone to report DNSSEC disabled.' } };
+      return { raw: { zone, dnssec }, result: { ready: true, zoneId: zone.id, dnssec: dnssec.result.status } };
+    }
     const route = routes[operation];
     requireValue(route, 'Cloudflare does not expose this operation; use its dashboard', 409);
     const raw = await this.request(route[1], route[0], route[2]);
+    if (operation === 'register' || operation === 'transfer') {
+      const state = raw.result?.state || '';
+      return { raw, result: raw.result, operationId: state === 'succeeded' ? '' : variables.domain, accepted: state !== 'succeeded', state };
+    }
     return { raw, result: raw.result };
   }
 }

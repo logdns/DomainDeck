@@ -1,35 +1,32 @@
-# DomainDeck 3.0.0-beta.7
+# DomainDeck 3.0.0-beta.8
 
-本版恢复原有 **Vue Vben Admin 5.8 + Ant Design Vue** 界面，并将它直接接到 Node.js 24 + SQLite。前端源码与锁定依赖纳入本仓库，构建不依赖相邻旧工程；原蓝色品牌、16px 正文、导航、概览卡片、主题、语言和手机布局保留。
+本版修复版本检查/安装状态、Cloudflare DNS 和 Registrar 查询，新增 Cloudflare Registrar 转入 API，以及域名后缀自动补全。
 
-## 修复内容
+## 修复
 
-- 原页面通过 `/api/vben` 获取正确的列表、详情、角色、权限、财务和通知数据；内部仍逐条进行权限检查，保留 `/api/v1`。
-- 修复退出未携带 token、失效会话触发重复退出的问题；改密及修改自己账户后重新登录，重置他人密码与修改本人密码分开。
-- 接入可同步域名，记录用途、测试状态和同步时间；编辑时秘密留空保留原配置，DNS-only 接入不能下单，registrar-only 接入不能操作 DNS。
-- 修复 Spaceship 可注册结果、MX/SRV/ALIAS/PTR 数据字段、DNS 替代编辑；Cloudflare SRV/CAA/TLSA/HTTPS 结构化表单正确提交。DNS-only Cloudflare 详情不再强制调用 Registrar API。
-- 购买会刷新所选接入和年限的报价，再明确确认扣款；保留唯一请求 ID 和不确定订单的防重保护。
-- 支付台账保留启用状态及账号字段，同步只读支付资料可在刷新后保留；通知测试正确显示成功/失败，配置不覆盖已有秘密；补上资产登记、JSON 导入和详情备注。
-- Vben 静态模块、字体和图标完整进入运行包，图标离线可用；更新器支持受限嵌套资源和二进制资产，拒绝缺失入口依赖。CSV 导出防止带空白的公式前缀执行。
-- 升级 Vue、Vue I18n、Axios、Vite、Zod 等依赖的安全补丁；依赖审计没有 high/critical，保留的构建工具 moderate/low 公告及隔离措施记录在 `docs/SECURITY.md`。
+- 版本检查保留安装器支持状态。手动运行不再显示可误点的在线替换按钮，并给出完整包升级提示。
+- Cloudflare DNS 从官方 Zones API 读取区域，按 zone ID 读取记录；DNS 页面会显示区域读取失败接入和需要的 token 权限。
+- Cloudflare Registrar 以 `domain-check` 返回的 `registrable` 和实时价格为准，不做 WHOIS。API 开放的后缀可检查并提交一年期新注册，采用价格复核、显式扣费确认和状态轮询。
+- Cloudflare Registrar 支持转入：提交前验证同账户 Cloudflare Zone 已激活且 DNSSEC 已关闭；标准 EPP 码按 RFC 4648 Base64 传给 API，`.uk` 系列允许无 EPP 码；状态使用官方 `transfer-in-status` 接口。
+- Cloudflare 转入 API 没有提供报价字段，提交前必须确认实际费用未知、Cloudflare 默认付款方式扣款且成功转入不可退款；`.uk` 系列通常无转入费。状态 `blocked` 属正常等待，`action_required` 需用户处理，`failed` 不会自动重试。
+- 需用户处理或失败的 Cloudflare 订单停止批量刷新，保留待人工核对状态并拦截重复下单；处理后可主动同步单笔订单。批量订单为空时正常返回，不再误报单笔订单不存在。
+- 缺少后缀的查询会补全常见后缀；下单前展示规范化后的域名。
 
-## 安装与升级
+Cloudflare Registrar API beta 需开启相应功能、Registrar 权限、默认注册联系人及付款资料。DomainDeck 不使用 WHOIS：新注册使用实时 `domain-check` 价格并在提交前复核；转入 API 未提供程序化价格，因此不会伪造金额，而在扣费确认中明确披露不确定费用。转入要求同账户 Zone 状态为 `active` 且 `/zones/{zone_id}/dnssec` 状态为 `disabled`；`.uk` 需在原注册商更新 Cloudflare IPS Tag。DNS 通过 `GET /zones?account.id=...` 找到 zone，再通过 `/zones/{zone_id}/dns_records` 读写记录；区域读取需要 Zone Read 与 DNS Read，DNSSEC 状态读取需要 DNS Read 或 DNS Write，修改记录需要 DNS Write。
 
-下载 `DomainDeck-node-linux.tar.gz` 与 `SHA256SUMS.txt`，校验后解压，在解压目录运行：
+官方资料：[Registrar API](https://developers.cloudflare.com/registrar/registrar-api/)、[Initiate Transfer](https://developers.cloudflare.com/api/resources/registrar/subresources/transfer_in/methods/create/)、[Get Transfer Status](https://developers.cloudflare.com/api/resources/registrar/subresources/transfer_in_status/methods/get/)、[DNSSEC Details](https://developers.cloudflare.com/api/resources/dns/subresources/dnssec/methods/get/)、[转入说明与费用](https://developers.cloudflare.com/registrar/get-started/transfer-domain-to-cloudflare/)、[API Token 权限](https://developers.cloudflare.com/fundamentals/api/reference/permissions/)。API 只支持部分后缀；新注册仅一年期。续费与联系人维护仍需在 Cloudflare 后台处理。
+
+## 安装
+
+下载 `DomainDeck-node-linux.tar.gz` 和 `SHA256SUMS.txt`，校验后解压并运行：
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS.txt
 sudo bash deploy/install.sh --public-origin https://你的实际域名
 ```
 
-公开地址的协议和端口必须与浏览器一致。服务监听 `127.0.0.1:4781`，运行时自动寻找或下载并校验 Node 24。离线安装可使用 `--node /absolute/path/to/node24 --no-download`；预检使用 `--check`。
+从 beta.1–beta.5 首次升级需使用完整包并运行安装器。beta.6 及之后安装的版本可用后台在线更新。升级前备份 `/var/lib/domaindeck-node`。安装器保留现有数据库、账户、密钥和站点配置。
 
-**beta.1–beta.5 首次升级到本版必须使用完整 tar 包重新执行安装器**，旧在线更新器无法接收 Vben 多文件 bundle。保留已有账户、密码、SQLite、vault.key 和站点配置；请先停服备份整个 `/var/lib/domaindeck-node`。启动时事务升级到 schema 6，降级须恢复匹配的数据库备份。新安装管理员 `admin` 的随机密码保存在该目录的 `initial-admin-password`，已有安装不会重置密码。
+## 验证边界
 
-`DomainDeck-node.bundle.json` 用于本版及后续版本之间的在线更新。更新依赖 GitHub SHA-256 摘要校验、数据库备份和原子链接切换；当前不提供自动健康回滚。
-
-## 验证与边界
-
-Actions 执行 Vben 类型检查、前端测试、生产构建、x64/ARM64 后端回归和一致打包、真实 Chromium 界面集成；测试和构建阶段禁网、只读源码并限制资源，联网只用于准备工具链和锁定依赖。Actions 的浏览器证据包含各页面与手机截图。
-
-仍为 beta。服务商协议、交易和通知测试使用虚构账户及模拟响应，没有用生产密钥执行真实扣款或发信，也没有操作用户服务器。Cloudflare 购买仍需官方后台；Spaceship 没有公开支付方式/账单列表；Porkbun 未公开的授权码/转移锁操作不虚构。本次针对认证、权限、适配层、凭据、DNS 和发布路径做源码及回归检查，不宣称外部独立全代码库安全审计。完整边界见 `docs/PARITY.md`、`docs/SECURITY.md`。
+发布由 GitHub Actions 执行前后端测试、Vben 类型检查、生产构建、x64/ARM64 隔离打包和 Chromium 桌面/手机回归；服务商测试使用模拟数据，不会扣费、发信或读取真实部署数据。此版本仍处于 beta，不等同于外部独立的完整安全审计。

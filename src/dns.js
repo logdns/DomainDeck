@@ -12,8 +12,8 @@ export async function dnsResource(database, context) {
       try {
         const { adapter } = adapterFor(database, context, bound.id);
         const domains = await adapter.domains();
-        for (const domain of domains) items.push({ id: `${bound.id}:${domain.remoteId}`, name: domain.name, provider: adapter.provider, connectionId: bound.id, connectionName: bound.name, remoteId: domain.remoteId });
-      } catch { notes.push({ connectionId: bound.id, message: 'Zone listing unavailable' }); }
+        for (const domain of domains) items.push({ id: `${bound.id}:${domain.remoteId}`, name: domain.name, provider: adapter.provider, connectionId: bound.id, connectionName: bound.name, remoteId: domain.remoteId, status: domain.metadata?.status || '' });
+      } catch (error) { notes.push({ connectionId: bound.id, connectionName: bound.name, message: error.status ? error.message : 'Zone listing unavailable; check the account and DNS permissions' }); }
     }
     return { items, notes };
   }

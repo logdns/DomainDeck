@@ -15,7 +15,10 @@ function availabilityResult(value, provider) {
   if (typeof result === 'boolean') return result ? 'available' : 'taken';
   if (provider === 'cloudflare') {
     const entry = value?.domains?.[0];
-    return entry?.available === true || entry?.status === 'available' ? 'available' : entry?.available === false ? 'taken' : 'unexpectedError';
+    if (entry?.registrable === true || entry?.available === true || entry?.status === 'available') return 'available';
+    if (entry?.available === false || entry?.registrable === false && entry.reason === 'domain_unavailable') return 'taken';
+    if (entry?.reason?.startsWith('extension_not_supported') || entry?.reason === 'extension_disallows_registration') return 'tldNotSupported';
+    return 'unexpectedError';
   }
   if (provider === 'porkbun') return String(value?.avail) === 'yes' || value?.avail === true ? 'available' : String(value?.avail) === 'no' || value?.avail === false ? 'taken' : 'unexpectedError';
   return 'unexpectedError';
@@ -83,7 +86,7 @@ export async function vbenResource(database, context) {
   }
   if (['/api/v1/availability', '/api/v1/transfer/quotes'].includes(path) && method === 'GET') {
     const result = await invoke(path);
-    result.quotes = result.quotes.map((quote) => ({ ...quote, capabilities: { ...capabilities(providers.find((provider) => provider.id === quote.provider)), ...quote.supports }, requiresContact: quote.provider === 'spaceship', price: quote.prices?.transfer, availability: { result: availabilityResult(quote.availability, quote.provider) } }));
+    result.quotes = result.quotes.map((quote) => ({ ...quote, capabilities: { ...capabilities(providers.find((provider) => provider.id === quote.provider)), ...quote.supports }, requiresContact: quote.provider === 'spaceship', price: quote.prices?.transfer, availability: { result: availabilityResult(quote.availability, quote.provider), reason: quote.availability?.reason || quote.availability?.domains?.[0]?.reason || '' } }));
     const selected = result.quotes.find((quote) => !quote.error);
     return { ...result, pricing: { prices: Object.fromEntries(['register', 'renew', 'transfer'].map((kind) => [kind, selected?.prices?.[kind] ? [{ priceInDefaultCurrency: { finalPrice: selected.prices[kind] } }] : []])) } };
   }
@@ -155,7 +158,7 @@ export async function vbenResource(database, context) {
   if (path === '/api/v1/dns/zones' && method === 'GET') return { ...result, total: result.items.length };
   if (path === '/api/v1/lookup' && method === 'GET') return { ...result, answer: result.records, resolver: query.get('server') || 'system' };
   if (path === '/api/v1/invoices' && method === 'GET') return { ...result, items: result.items.map((item) => ({ ...item, invoiceId: item.id, hostedInvoiceUrl: item.url })) };
-  if (path === '/api/v1/system/update' && method === 'GET') return { ...result, current: { version: result.current, runtime: process.version, platform: process.platform, managed: result.installSupported ? 'systemd' : null }, configured: true, settings: { githubRepo: 'logdns/DomainDeck', feed: '' } };
-  if (path === '/api/v1/system/update/check' && method === 'POST') return { ...result, hasUpdate: result.available, latest: result.available ? { version: result.version, source: 'github' } : null, checkedAt: new Date().toISOString() };
+  if (path === '/api/v1/system/update' && method === 'GET') return { ...result, installSupported: Boolean(result.installSupported), current: { version: result.current, runtime: process.version, platform: process.platform, managed: result.installSupported ? 'systemd' : null }, configured: true, settings: { githubRepo: 'logdns/DomainDeck', feed: '' } };
+  if (path === '/api/v1/system/update/check' && method === 'POST') return { ...result, hasUpdate: result.available, installSupported: Boolean(result.installSupported), latest: result.available ? { version: result.version, source: 'github' } : null, checkedAt: new Date().toISOString() };
   return result;
 }

@@ -2,13 +2,13 @@
 
 独立重构的 **Node.js 24 + SQLite** 域名工作台。前端使用 [Vue Vben Admin 5.8](https://doc.vben.pro/)、Vue 3、Pinia、Vue Router 和 Ant Design Vue，恢复原有蓝色品牌、大字体、圆角导航、响应式布局、中英文和深色模式。发布包已包含编译后的界面，服务器无需安装前端依赖。
 
-这是 `3.0.0-beta.7` 公开测试版。原 Vben 页面通过 `/api/vben` 兼容层连接新的 SQLite 业务服务，保留 `/api/v1` API。本版修复登录退出、表单字段、角色权限、报价状态、DNS 记录格式、密钥保留和接入同步。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
+这是 `3.0.0-beta.8` 公开测试版。原 Vben 页面通过 `/api/vben` 兼容层连接新的 SQLite 业务服务，保留 `/api/v1` API。本版修复版本更新状态、Cloudflare DNS 权限诊断、Registrar 注册/转入 API 和常见后缀补全。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
 
 ## 功能
 
 - 随机初始密码，账户资料、改名、改密、重置、停用和删除；管理员/只读基础角色及附加角色权限矩阵；权限变化撤销会话。
 - Porkbun：分页同步、DNS 增删改、报价、注册/续费/转入、NS、自动续费、转入状态、账单与余额读取。
-- Cloudflare：分别同步 DNS 区域和 Registrar 注册域名，DNS 增删改、清缓存、报价、自动续费/转移锁、账单与支付资料读取；注册/手动续费仍需在官方后台完成。
+- Cloudflare：分别同步 DNS 区域和 Registrar 注册域名，DNS 增删改、清缓存、实时可注册性与价格检查、支持后缀的新注册/转入及状态轮询、自动续费/转移锁、账单与支付资料读取；续费、授权码和 Zone DNSSEC 配置需在官方后台处理。Cloudflare Registrar API 不提供 WHOIS 查询或转入报价；转入扣费前会显示费用不确定提示并要求确认。
 - Spaceship：按 [官方文档](https://docs.spaceship.dev/) 使用 `X-API-Key`、`X-API-Secret`；支持分页域名/DNS、DNS 新增删除、联系人、注册/续费/转入、NS、自动续费、授权码、转移锁与异步操作状态。
 - GoDaddy、Namecheap 声明式接入预设及 JSON/XML 自定义服务商，禁止脚本执行和私网请求。
 - 计费默认关闭；下单需确认报价与年限、唯一请求 ID；结果不确定的订单保留待核对状态，阻止自动重复扣款。

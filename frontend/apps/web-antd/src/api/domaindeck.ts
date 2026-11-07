@@ -3,22 +3,25 @@ import { Modal } from 'ant-design-vue';
 
 const purchaseRequests = new Map<string, string>();
 async function purchase(path: string, kind: string, data: Record<string, any>) {
-  const domain = data.domain || decodeURIComponent(path.split('/')[2] || '');
+  let domain = data.domain || decodeURIComponent(path.split('/')[2] || '');
   const years = kind === 'transfer' ? 1 : Number(data.years || 1);
-  const quote: any = await requestClient.get('/availability', { params: { domain, years, connectionId: data.connectionId } });
+  const quotePath = kind === 'transfer' ? '/transfer/quotes' : '/availability';
+  const quote: any = await requestClient.get(quotePath, { params: { domain, years, connectionId: data.connectionId } });
+  domain = quote.domain;
   const selected = quote.quotes?.find((item: any) => item.connectionId === data.connectionId) || quote.quotes?.find((item: any) => !item.error);
   const price = selected?.prices?.[kind];
-  if (!selected || selected.error || (!price && !selected.unpriced)) throw new Error('无法取得有效报价，请先检查服务商接入');
+  const cloudflareTransfer = kind === 'transfer' && selected?.provider === 'cloudflare';
+  if (!selected || selected.error || (!price && !selected.unpriced && !cloudflareTransfer) || (cloudflareTransfer && selected.transferReady !== true)) throw new Error(selected?.transferBlockReason || '无法取得有效报价，请先检查服务商接入');
   const confirmed = await new Promise<boolean>((resolve) => Modal.confirm({
     title: `确认${({ register: '注册', renew: '续费', transfer: '转入' } as Record<string, string>)[kind]} ${domain}？`,
-    content: price ? `${years} 年合计 ${price.currency} ${price.amount}。将使用服务商账户实际扣款，请核对域名与费用。` : '此服务商未提供可验证报价。继续将按官方账户的实际价格扣款，请先在官方后台确认费用。',
+    content: price ? `${years} 年合计 ${price.currency} ${price.amount}。将使用服务商账户实际扣款，请核对域名与费用。` : cloudflareTransfer ? 'Cloudflare API 不提供转入报价。提交后会按 Cloudflare 实际转入费从默认支付方式扣款；费用不可退款，UK 系列通常零转入费。请先在 Cloudflare 账单及官方转入页面核实并确认。' : '此服务商未提供可验证报价。继续将按官方账户的实际价格扣款，请先在官方后台确认费用。',
     okText: '确认扣款并提交', cancelText: '取消', onOk: () => { resolve(true); }, onCancel: () => { resolve(false); },
   }));
   if (!confirmed) return { cancelled: true };
   const identity = `${kind}:${domain}:${selected.connectionId}:${years}`;
   const requestId = purchaseRequests.get(identity) || crypto.randomUUID();
   purchaseRequests.set(identity, requestId);
-  const result: any = await requestClient.post(path, { ...data, connectionId: selected.connectionId, years, confirm: true, requestId, expectedPrice: price, acceptUnpriced: !price && selected.unpriced === true });
+  const result: any = await requestClient.post(path, { ...data, domain, connectionId: selected.connectionId, years, confirm: true, requestId, expectedPrice: price, acceptUnpriced: !price && (selected.unpriced === true || cloudflareTransfer) });
   purchaseRequests.delete(identity);
   return { ...result, operationId: result.order?.operationId };
 }
@@ -296,8 +299,8 @@ export const getUpdateInfo = () => requestClient.get<any>('/system/update');
 /** 拉版本源，看有没有新版本 */
 export const checkUpdate = () =>
   requestClient.post<any>('/system/update/check', {});
-/** 下载并原位替换可执行文件；restart=true 时替换后退出，由 systemd 拉起 */
-export const applyUpdate = (data: { version?: string; restart: boolean }) =>
+/** 下载并切换到校验后的程序版本，由 systemd 自动重启服务 */
+export const applyUpdate = (data: { version?: string }) =>
   requestClient.post<any>('/system/update/apply', data);
 
 /* ---------------- 账户 / 角色 ---------------- */

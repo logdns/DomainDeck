@@ -1,5 +1,9 @@
 # 发布前专项安全检查
 
+Cloudflare 转入专项复核：转入不借用新注册报价接口，Zone 激活与 DNSSEC 关闭验证在提交端再次执行；API 未提供转入价格，必须显式接受费用未知后才提交。EPP 码只在请求中使用、以标准 Base64 发送，不写入订单或审计；仅 Cloudflare 的 `.uk` 转入豁免 EPP。`blocked` 保持待处理；`action_required` 和 `failed` 保留为待人工核对并停止批量状态刷新，需处理后主动查询单笔订单；核对前禁止新请求重复下单。同一请求 ID 仅回放已存订单。回归用模拟官方响应验证这些状态、重复提交拦截及不持久化原始工作流上下文，不代表真实扣费或转入已成功。
+
+beta.8 追加检查：更新状态兼容层完整传递 `installSupported`，仅已安装的 systemd 服务可在线替换；更新按钮与服务端结果一致。Cloudflare DNS API 按 account zone 和 zone ID 访问；Registrar 使用 `registrable`、实时定价、再次核价及不重试的订单状态轮询，不依赖 WHOIS。后缀补全在查询和提交端验证，用户可见规范化后的域名。回归覆盖错误路径、API 请求形状、桌面与手机实际 UI。前端 `pnpm audit --prod --audit-level high` 通过：0 critical、0 high、5 moderate、2 low；剩余依赖告警详见下文。源码凭据特征扫描未命中，排除了 `.env`、数据库、构建和数据目录。
+
 beta.7 追加检查：恢复 Vben 前端后使用独立 `/api/vben` 兼容层，每个内部调用重新授权，viewer 不返回财务/审计。秘密输入留空保留密文；连接用途限制在报价、购买及 DNS 区域操作生效。bundle 只允许受限静态路径，检查入口引用并支持规范 base64；拒绝穿越、重复、超量。CSV 过滤空白后的公式前缀。CI 新增真实 Chromium 测试，与依赖准备阶段隔离；项目执行阶段禁网且不注入发布 token。源码公开扫描不包含父目录的真实数据。
 
 依赖审计使用 npm 官方 registry，修复 Vue、Vue I18n、Axios、Vite、Zod 及间接依赖的已知高危公告并更新锁文件。2026-11-07 的 `pnpm audit --prod` 结果为 0 critical、0 high、5 moderate、2 low（工作区合计，包含构建/检查工具）。剩余公告涉及 smol-toml、serialize-javascript、postcss-selector-parser、deepmerge、glob 和 minimatch，路径均位于源码检查、样式处理或构建插件，不进入零 npm 依赖的 Node 服务。它们仍是已知限制；不通过强制跨主版本覆盖来掩盖。构建只处理仓库源文件，执行阶段禁网且无发布凭据。Actions 在依赖准备阶段执行 high/critical 审计门禁；本记录不是对将来新公告的保证。

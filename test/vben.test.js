@@ -8,14 +8,14 @@ import { createApp } from '../src/server.js';
 import { demoTransport, seedDemo } from '../src/demo.js';
 import { decrypt } from '../src/vault.js';
 
-async function fixture(callback) {
+async function fixture(callback, options = {}) {
   const database = openDatabase(':memory:');
   const key = randomBytes(32);
   await createAccount(database, { username: 'admin', password: 'fixture-password' });
   await createAccount(database, { username: 'viewer', password: 'fixture-password', role: 'viewer' });
   database.prepare("UPDATE users SET role='viewer' WHERE username='viewer'").run();
   seedDemo(database, key);
-  const server = createApp(database, { key, transport: demoTransport, notificationTransport: async () => Response.json({ ok: true }), version: '3.0.0-beta.6' });
+  const server = createApp(database, { key, transport: demoTransport, notificationTransport: async () => Response.json({ ok: true }), version: '3.0.0-beta.6', ...options });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -58,6 +58,12 @@ test('Vben authentication and every restored page receive the expected API struc
   const quotes = await call('/availability?domain=new.example', token);
   assert.equal(quotes.data.quotes.find((quote) => quote.provider === 'spaceship').availability.result, 'available');
   assert.equal(quotes.data.quotes.find((quote) => quote.provider === 'spaceship').prices.register.amount, '12.00');
+  const cloudflareQuote = (await call('/availability?domain=cloudflaretestcom', token)).data.quotes.find((quote) => quote.provider === 'cloudflare');
+  assert.equal(cloudflareQuote.availability.result, 'available');
+  assert.equal(cloudflareQuote.capabilities.register, true);
+  assert.equal(cloudflareQuote.capabilities.transfer, true);
+  assert.equal(cloudflareQuote.prices.register.amount, '9.99');
+  assert.equal((await call('/availability?domain=cloudflaretestcom', token)).data.domain, 'cloudflaretest.com');
   const zones = (await call('/dns/zones', token)).data;
   assert.equal(zones.total, 3);
   const zone = zones.items.find((item) => item.provider === 'spaceship');
@@ -131,4 +137,23 @@ test('Vben order reconciliation and notification test report the actual persiste
   assert.equal((await call('/notifications/log', token)).data.items[0].ok, 1);
   assert.equal((await call('/notifications', token, { enabled: true, rules: { expiryDays: [14] } }, 'PUT')).status, 200);
   assert.equal((await call('/notifications', token)).data.rules.notifyOnRenew, true);
+}));
+
+test('Vben update status and check preserve install support so unsupported installs cannot show a usable apply button', () => fixture(async ({ call, login }) => {
+  const token = await login('admin');
+  const status = await call('/system/update', token);
+  assert.equal(status.data.installSupported, false);
+  assert.equal(status.data.current.version, '3.0.0-beta.6');
+  const checked = await call('/system/update/check', token, {});
+  assert.equal(checked.status, 200, checked.message);
+  assert.equal(checked.data.hasUpdate, true);
+  assert.equal(checked.data.installSupported, false);
+  const applied = await call('/system/update/apply', token, { version: '3.0.0-beta.7' });
+  assert.equal(applied.status, 409);
+}, {
+  updater: {
+    status: () => ({ current: '3.0.0-beta.6', installSupported: false, channel: 'beta' }),
+    check: async () => ({ available: true, current: '3.0.0-beta.6', version: '3.0.0-beta.7', installSupported: false }),
+    apply: async () => { throw Object.assign(new Error('Systemd installation required'), { status: 409 }); },
+  },
 }));

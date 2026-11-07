@@ -94,13 +94,13 @@ sudo systemctl start domaindeck-node
 
 报价核对不能代替官方结算上限。Spaceship 文档说明促销配额变化可能导致最终价格高于报价，交易接口也没有最高扣款额字段；需要严格金额上限时请在官方后台完成购买。续费前从官方获取最新到期时间，避免使用本地手工修改的日期。
 
-本地支付方式只记账，不会替换官方付款方式。Cloudflare 购买使用官方后台，Spaceship 账单使用本地登记；具体支持能力见 [对照表](PARITY.md)。
+本地支付方式只记账，不会替换官方付款方式。Cloudflare Registrar API 检查价格后可提交一年期新注册；支持域名转入，但要求同账户存在已激活 Zone 且 DNSSEC 已关闭。转入价格未由 Cloudflare API 暴露，确认框会说明默认付款方式扣款、实际费用未知和成功后不可退款。需开启 Registrar 权限、默认联系人及有效支付资料；续费、联系人修改仍在官方后台完成。Spaceship 账单使用本地登记；具体支持能力见 [对照表](PARITY.md)。
 
 通知页支持七种渠道，按类型展示表单字段；秘密留空保留旧密钥。API 只回显主机、收件人等非秘密字段；切换渠道类型会清除旧类型配置。SMTP 使用 465/TLS 或 587/STARTTLS，验证证书；Webhook 和自定义注册商只能使用公网 HTTPS 443。自动提醒每小时检查，按域名、到期时间、阈值和渠道持久化去重；发送成功才标记已发送。`POST notifications/run` 可用 `force:true` 明确重新发送，普通界面检查仍去重。测试按钮会实际发送。
 
 ## 在线更新
 
-**从 beta.1–beta.5 首次升级到 beta.7，必须下载完整程序包重新运行 `deploy/install.sh`。** 旧更新器只认识三个固定静态文件，不能接收 Vben 多文件 bundle。服务器安装不编译前端，完整包内已含构建结果。保留原数据目录与 `/etc/domaindeck-node.env`；请先停服备份数据。本版启动时事务升级 schema 6，降级需要同时恢复匹配的旧数据库。
+**从 beta.1–beta.5 首次升级到 beta.8，必须下载完整程序包重新运行 `deploy/install.sh`。** 旧更新器只认识三个固定静态文件，不能接收 Vben 多文件 bundle。服务器安装不编译前端，完整包内已含构建结果。保留原数据目录与 `/etc/domaindeck-node.env`；请先停服备份数据。本版启动时事务升级 schema 6，降级需要同时恢复匹配的旧数据库。
 
 后台「版本与设置」检查 `logdns/DomainDeck` 的 Node 3.x Release。仅同意 GitHub 返回的 SHA-256 摘要，缺少摘要或不匹配时拒绝更新。仅允许 HTTPS GitHub 及其发布资源域的下载和重定向。
 

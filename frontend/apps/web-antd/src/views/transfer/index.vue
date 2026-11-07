@@ -33,6 +33,7 @@ const canTransfer = hasAccessByCodes(['transfer:write']);
 const form = reactive<any>({
   domain: '',
   authCode: '',
+  contactExtensions: '',
   registrant: '',
   privacyLevel: 'high',
   autoRenew: true,
@@ -51,8 +52,10 @@ const selectedQuote = computed<any>(
     quotes.value.find((q) => q.connectionId === selectedQuoteId.value) || null,
 );
 const needsContact = computed(
-  () => selectedQuote.value?.requiresContact !== false,
+  () => selectedQuote.value?.requiresContact === true,
 );
+const isCloudflare = computed(() => selectedQuote.value?.provider === 'cloudflare');
+const isUkDomain = computed(() => isCloudflare.value && /\.uk$/i.test(form.domain.trim()));
 
 const query = ref('');
 const querying = ref(false);
@@ -79,6 +82,7 @@ async function loadQuotes() {
   quoting.value = true;
   try {
     const res: any = await getTransferQuotes(domain);
+    form.domain = res.domain;
     quotes.value = res.quotes || [];
     if (!quotes.value.some((q) => q.connectionId === selectedQuoteId.value)) {
       selectedQuoteId.value = (
@@ -100,21 +104,35 @@ function pick(q: any) {
 async function submit() {
   if (
     !form.domain ||
-    !form.authCode ||
+    (!isUkDomain.value && !form.authCode) ||
     (needsContact.value && !form.registrant)
   ) {
     message.warning(
       needsContact.value
         ? '域名、授权码、注册人联系人 ID 均为必填'
-        : '域名与授权码为必填',
+        : isUkDomain.value
+          ? '请输入域名'
+          : '域名与授权码为必填',
     );
     return;
+  }
+  let contactExtensions: Record<string, unknown> | undefined;
+  if (form.contactExtensions.trim()) {
+    try {
+      const parsed = JSON.parse(form.contactExtensions);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+      contactExtensions = parsed;
+    } catch {
+      message.warning('Cloudflare 联系人扩展必须是 JSON 对象');
+      return;
+    }
   }
   submitting.value = true;
   try {
     const res: any = await submitTransfer({
       domain: form.domain,
       authCode: form.authCode,
+      ...(contactExtensions ? { contactExtensions } : {}),
       privacyLevel: form.privacyLevel,
       autoRenew: form.autoRenew,
       paymentMethodId: form.paymentMethodId,
@@ -150,15 +168,19 @@ async function checkStatus() {
 const STATUS: Record<string, { color: string; text: string }> = {
   pendingOwnerAction: { color: 'orange', text: '等待原注册商确认' },
   pending: { color: 'orange', text: '转移处理中' },
+  in_progress: { color: 'blue', text: '转移进行中' },
+  action_required: { color: 'orange', text: '需要你完成操作' },
+  blocked: { color: 'gold', text: '等待原注册商或注册局响应' },
+  succeeded: { color: 'green', text: '转移完成' },
+  failed: { color: 'red', text: '转移失败，请核对原因后再操作' },
   inProgress: { color: 'blue', text: '转移进行中' },
   completed: { color: 'green', text: '转移完成' },
   success: { color: 'green', text: '转移完成' },
-  failed: { color: 'red', text: '转移失败' },
   cancelled: { color: 'default', text: '已取消' },
 };
 
 function statusOf(data: any) {
-  const code = data?.status || data?.transferStatus || '';
+  const code = data?.state || data?.status || data?.transferStatus || '';
   return STATUS[code] || { color: 'default', text: code || '未知状态' };
 }
 </script>
@@ -179,8 +201,12 @@ function statusOf(data: any) {
         <div
           class="mb-4 rounded border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800"
         >
-          转入前需在原注册商解锁域名并获取授权码。转入通常含一年续期，多数 TLD
-          需要 5–7 天完成。
+          转入前请在原注册商解锁域名并取得授权码，确认联系人和支付方式有效。
+          转入一般需 1–10 天；提交前会再次询价并确认扣款，结果不明时请先核对订单。
+          <div v-if="isCloudflare" class="mt-2 font-semibold">
+            Cloudflare 要求域名已添加为激活的 Zone 并关闭 DNSSEC；.uk 系列使用 Cloudflare IPS Tag，无需 EPP 码。
+            API 不提供转入报价，请先核实实际费用；提交会从默认支付方式扣款，费用不可退款。
+          </div>
         </div>
 
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -199,6 +225,17 @@ function statusOf(data: any) {
                 @click="loadQuotes"
                 >查转入报价</Button
               >
+            </div>
+          </div>
+          <div v-if="isCloudflare" class="md:col-span-2">
+            <div class="mb-1 text-xs text-slate-500">注册局专用联系人扩展（可选）</div>
+            <Input.TextArea
+              v-model:value="form.contactExtensions"
+              :rows="2"
+              placeholder="{}"
+            />
+            <div class="mt-1 text-xs text-slate-400">
+              仅当 Cloudflare 对应后缀的 transfer_schema 要求 contact_extensions 时填写 JSON 对象。
             </div>
           </div>
 
@@ -259,14 +296,20 @@ function statusOf(data: any) {
                       {{
                         q.price
                           ? `${q.price.currency} ${Number(q.price.amount).toFixed(2)}`
-                          : '—'
+                          : q.provider === 'cloudflare' && q.transferPriceUnknown
+                            ? 'Cloudflare 实际价，API 不提供报价'
+                            : '—'
                       }}
                     </td>
                     <td class="text-xs text-slate-500">
                       {{
-                        q.available === 'taken'
+                        q.transferReady === false
+                          ? q.transferBlockReason || 'Cloudflare 转入条件未满足'
+                          : q.available === 'taken'
                           ? '已被注册（可转入）'
-                          : q.available || '—'
+                          : q.transferReady === true
+                            ? 'Cloudflare Zone 已激活，DNSSEC 已关闭'
+                            : q.available || '—'
                       }}
                     </td>
                     <td class="text-right">
@@ -296,14 +339,17 @@ function statusOf(data: any) {
             </div>
           </div>
           <div class="md:col-span-2">
-            <div class="mb-1 text-xs text-slate-500">授权码（EPP Code）</div>
+            <div class="mb-1 text-xs text-slate-500">
+              {{ isUkDomain ? 'UK 域名：不使用 EPP 码' : '授权码（EPP Code）' }}
+            </div>
             <Input
               v-model:value="form.authCode"
               class="font-mono"
-              placeholder="从原注册商获取"
+              :disabled="isUkDomain"
+              :placeholder="isUkDomain ? '请在原注册商设置 Cloudflare IPS Tag' : '从原注册商获取'"
             />
           </div>
-          <div>
+          <div v-if="!isCloudflare">
             <div class="mb-1 text-xs text-slate-500">WHOIS 隐私</div>
             <Select
               v-model:value="form.privacyLevel"
@@ -384,8 +430,23 @@ function statusOf(data: any) {
               }}</Tag>
               <Descriptions :column="1" size="small" bordered>
                 <DescriptionsItem label="域名">{{
-                  queryResult.domain
+                  queryResult.domain_name || queryResult.domain || query
                 }}</DescriptionsItem>
+                <DescriptionsItem v-if="queryResult.state" label="Cloudflare 状态">
+                  {{ queryResult.state }}
+                </DescriptionsItem>
+                <DescriptionsItem v-if="queryResult.context?.action" label="待处理操作">
+                  {{ queryResult.context.action }}
+                </DescriptionsItem>
+                <DescriptionsItem v-if="queryResult.error?.message" label="失败原因">
+                  {{ queryResult.error.message }}
+                </DescriptionsItem>
+                <DescriptionsItem v-if="queryResult.state === 'action_required'" label="需要处理">
+                  请查看 Cloudflare 返回的 context，并完成邮件或注册局要求后再次查询。
+                </DescriptionsItem>
+                <DescriptionsItem v-if="queryResult.state === 'blocked'" label="转入说明">
+                  等待原注册商或注册局响应属正常状态，可稍后再次查询。
+                </DescriptionsItem>
                 <DescriptionsItem
                   v-if="queryResult.requestedAt"
                   label="提交时间"

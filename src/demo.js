@@ -26,6 +26,20 @@ export async function demoTransport(target, options = {}) {
     if (url.pathname.includes('/dns/retrieve')) return Response.json({ status: 'SUCCESS', records: [] });
     return Response.json({ status: 'SUCCESS', response: { price: '12.00', additional: { renewal: { price: '12.00' }, transfer: { price: '12.00' } }, balance: '100', currency: 'USD' } });
   }
-  if (url.hostname === 'api.cloudflare.com') return Response.json({ success: true, result: url.pathname.endsWith('/zones') ? [{ id: 'b'.repeat(32), name: 'cloudflare.example' }] : [], result_info: { total_pages: 1 } });
+  if (url.hostname === 'api.cloudflare.com') {
+    if (url.pathname.endsWith('/registrar/domain-check')) {
+      const payload = options.body ? JSON.parse(options.body) : {};
+      return Response.json({ success: true, result: { domains: (payload.domains || []).map((name) => ({ name, registrable: true, pricing: { registration_cost: '9.99', renewal_cost: '10.99', currency: 'USD' } })) } });
+    }
+    if (url.pathname.endsWith('/registrar/registrations') && options.method === 'POST') return Response.json({ success: true, result: { domain_name: JSON.parse(options.body).domain_name, state: 'in_progress', completed: false } }, { status: 202 });
+    if (url.pathname.endsWith('/registration-status')) return Response.json({ success: true, result: { state: 'succeeded', completed: true } });
+    if (url.pathname.endsWith('/transfer-in') && options.method === 'POST') return Response.json({ success: true, result: { domain_name: url.pathname.split('/').at(-2), state: 'pending', completed: false } }, { status: 202 });
+    if (url.pathname.endsWith('/transfer-in-status')) return Response.json({ success: true, result: { domain_name: url.pathname.split('/').at(-2), state: 'blocked', completed: false, context: { action: 'Waiting for the losing registrar.' } } });
+    if (url.pathname.endsWith('/dnssec')) return Response.json({ success: true, result: { status: 'disabled' } });
+    if (url.pathname === '/client/v4/zones' && url.searchParams.has('name')) return Response.json({ success: true, result: [{ id: 'c'.repeat(32), name: url.searchParams.get('name'), status: 'active' }] });
+    if (url.pathname.endsWith('/zones')) return Response.json({ success: true, result: [{ id: 'b'.repeat(32), name: 'cloudflare.example', status: 'active' }], result_info: { total_pages: 1 } });
+    if (url.pathname.includes('/dns_records')) return Response.json({ success: true, result: [{ id: 'demo-record', type: 'TXT', name: 'cloudflare.example', content: 'demo-only', ttl: 1 }], result_info: { total_pages: 1 } });
+    return Response.json({ success: true, result: {} });
+  }
   throw new Error('External requests are disabled in demo mode');
 }

@@ -13,10 +13,10 @@
 | 概览、到期统计、财务与审计可见性 | 概览页、`overview` | 统计中的财务、审计字段按权限返回 |
 | 域名列表、详情、手工资产、导入导出 | 资产页；`domains`、`:id/details`、`domains/import` | 事务导入、日期校验、元数据编辑 |
 | 搜索、到期/自动续费筛选、排序、CSV | 资产页；浏览器筛选导出 | 模板转义测试；CSV 公式前缀处理 |
-| 查询可用性、注册/续费/转入报价 | 注册/转入页；`availability`、`transfer/quotes` | 精确年限、总价计算、Cloudflare POST 方法 |
-| 注册、续费、转入申请 | 注册/转入/资产管理；`register`、`domains/:id/renew`、`transfer` | 计费开关、报价确认、幂等、结果不明阻止重试 |
+| 查询可用性、注册/续费/转入报价 | 注册/转入页；`availability`、`transfer/quotes` | 精确年限、总价计算、Cloudflare 注册报价；Cloudflare 转入费用不由 API 提供，UI 明确提示 |
+| 注册、续费、转入申请 | 注册/转入/资产管理；`register`、`domains/:id/renew`、`transfer` | 计费开关、扣费确认、幂等、结果不明阻止重试、Cloudflare Zone/DNSSEC 前置检查 |
 | 自动续费、NS、授权码、转移锁、官方详情 | 资产管理；`domains/:id/{autorenew,nameservers,auth-code,transfer-lock,details}` | Spaceship/Porkbun/Cloudflare 模拟请求 |
-| 转入进度、异步操作进度 | 转入页与订单页；`transfer/:domain`、`operations/:id` | 订单同步测试，不提交第二次扣款 |
+| 转入进度、异步操作进度 | 转入页与订单页；`transfer/:domain`、`operations/:id` | Cloudflare `transfer-in-status` 状态、EPP Base64 编码、UK 无 EPP、blocked/action_required/failed 映射；订单同步不会重提扣款 |
 | DNS 区域、记录查询/新增/修改/删除 | DNS 区域页及资产 DNS；`dns/zones/:id/records` | Spaceship 精确记录删除、Cloudflare PATCH、Porkbun CRUD |
 | 清除 Cloudflare 缓存 | DNS 区域与资产管理；`purge` | zone 目标与请求体测试 |
 | DNS 解析查询 | 解析查询页；`lookup` | 类型校验、模拟解析结果、失败提示 |
@@ -34,7 +34,7 @@
 
 - **Spaceship**：按 <https://docs.spaceship.dev/> 的 API Key/Secret、分页、联系人、域名交易、DNS 与异步操作协议实现。202 空响应通过 `spaceship-async-operationid` 跟踪。DNS 编辑采用先新增替代记录、再删除原记录；第二步失败明确要求刷新后核对，避免盲目重试。删除时不发送 `ttl`、`group`；MX 使用 `preference`，ALIAS 使用 `aliasName`，PTR 使用 `pointer`，SRV 保留带下划线的 service/protocol。公开 API 没有支付方式和账单列表，使用本地记账。
 - **Porkbun**：保留 API Key/Secret 接入、分页域名、DNS、注册/续费/转入、NS、自动续费、余额和账单。扣款使用整型美分，在提交前再次核对价格。不虚构授权码或转移锁 API。
-- **Cloudflare**：DNS zones 与 Registrar registrations 分开读取和同步。报价使用 POST；公开购买接口未接入，注册/手动续费/转入及授权码需到官方后台。账单和支付资料只读，完整卡号裁剪为末四位。
+- **Cloudflare**：DNS zones 与 Registrar registrations 分开读取和同步。DNS 使用官方 Zones API、zone-scoped DNS Records API 和 zone ID。Registrar API 以实时 `domain-check` 的 `registrable` 和价格字段检查，不做 WHOIS；API 支持的后缀可提交一年期新注册并轮询状态。域名转入使用官方 `transfer-in` 与 `transfer-in-status` API，提交前校验同账户 Zone 为 active 且 DNSSEC disabled；EPP 码只在内存中编码发送，不进入订单/审计日志；UK 后缀不要求 EPP。转入接口未提供价格，需在 UI 明确确认由 Cloudflare 默认付款方式扣费且完成后不可退款。续费、联系人更新仍需在官方后台操作。单独接入权限不足会在 DNS 页面明确提示。账单和支付资料只读，完整卡号裁剪为末四位。
 - **GoDaddy / Namecheap**：保留旧声明式模板暴露的域名、详情、续费和设置能力。Namecheap 只暴露查询和续费；GoDaddy 不开启整域覆盖式 DNS 写入或未声明的转入。报价不可验证的自定义服务商，必须额外确认按官方价格扣款。预设支持分页，自定义声明可通过 `pagination.pageSize` 和 `{page}`/`{cursor}` 扩展分页。
 
 ## 有意调整

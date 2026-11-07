@@ -42,7 +42,6 @@ const confirmBilling = ref(false);
 const status = ref<any>(null);
 
 /* ---------------- 版本与更新 ---------------- */
-const upd = reactive({ autoRestart: true });
 const updState = ref<any>(null);
 const updBusy = ref(false);
 const applying = ref(false);
@@ -59,6 +58,7 @@ async function doCheck() {
       ...(updState.value || {}),
       latest: res.latest,
       hasUpdate: res.hasUpdate,
+      installSupported: res.installSupported,
       checkedAt: res.checkedAt,
       error: null,
     };
@@ -77,7 +77,6 @@ async function doApply() {
   try {
     const res: any = await applyUpdate({
       version: updState.value?.latest?.version,
-      restart: upd.autoRestart,
     });
     message.success(
       res.restarting
@@ -617,7 +616,7 @@ const defaultRegistrar = computed(
         <div
           class="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3"
         >
-          <Button :loading="updBusy" @click="doCheck">检查更新</Button>
+          <Button :loading="updBusy" :disabled="!can('settings:read')" @click="doCheck">检查更新</Button>
           <span v-if="updState?.checkedAt" class="text-xs text-slate-400">
             上次检查 {{ dayjs(updState.checkedAt).format('MM-DD HH:mm') }}
           </span>
@@ -661,18 +660,14 @@ const defaultRegistrar = computed(
               </span>
             </div>
             <div v-if="updState.hasUpdate" class="flex items-center gap-3">
-              <label class="flex items-center gap-1.5 text-xs text-slate-600">
-                <Switch v-model:checked="upd.autoRestart" size="small" />
-                更新后重启
-              </label>
               <Popconfirm
-                :title="`确认下载并更新到 ${updState.latest.version}？更新会替换当前可执行文件并重启服务。`"
+                :title="`确认下载并更新到 ${updState.latest.version}？更新会备份数据库并切换程序版本。`"
                 ok-text="更新"
                 cancel-text="取消"
                 @confirm="doApply"
               >
                 <Button
-                  :disabled="!can('settings:write')"
+                  :disabled="!can('settings:write') || !updState.installSupported"
                   :loading="applying"
                   size="small"
                   type="primary"
@@ -684,21 +679,22 @@ const defaultRegistrar = computed(
           <div v-if="updState.latest.notes" class="update-notes">
             {{ updState.latest.notes }}
           </div>
-          <div
-            v-if="updState.hasUpdate && !upd.autoRestart"
-            class="mt-2 text-xs text-amber-700"
-          >
-            已关闭自动重启：替换后需要手动执行 systemctl restart domaindeck。
-          </div>
         </div>
 
         <Alert
-          v-if="!updState?.current?.managed"
+          v-if="updState && !updState.installSupported"
           class="mt-3"
           type="warning"
           show-icon
-          message="当前是前台手动运行，更新后不会自动拉起"
-          description="在服务器上建议用 deploy/install.sh 注册 systemd 服务，更新后会自动重启；否则更新完成后需要手动启动。"
+          message="当前安装方式不支持后台在线替换"
+          description="请下载完整 Linux Release 包并重新运行安装器。只有由官方 systemd 安装器管理的 Node 3.x 实例才开放在线更新。"
+        />
+        <Alert
+          v-else-if="updState?.hasUpdate && !can('settings:write')"
+          class="mt-3"
+          type="info"
+          show-icon
+          message="发现新版本，但当前账号没有安装权限"
         />
       </Card>
 

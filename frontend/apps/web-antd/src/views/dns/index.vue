@@ -5,6 +5,7 @@ import { useAccess } from '@vben/access';
 import Page from '#/components/deck-page.vue';
 
 import {
+  Alert,
   Button,
   Card,
   Empty,
@@ -38,6 +39,8 @@ const canWrite = computed(() => hasAccessByCodes(['dns:write']));
 
 const loading = ref(false);
 const zones = ref<any[]>([]);
+const zoneNotes = ref<any[]>([]);
+const recordsError = ref('');
 const zoneId = ref<string>('');
 const records = ref<any[]>([]);
 const providerFilter = ref<string | undefined>();
@@ -144,9 +147,13 @@ async function loadZones() {
   try {
     const res: any = await getDnsZones();
     zones.value = res.items || [];
+    zoneNotes.value = res.notes || [];
     if (!zones.value.some((z) => z.id === zoneId.value)) {
       zoneId.value = zones.value[0]?.id || '';
     }
+  } catch (error: any) {
+    zones.value = [];
+    zoneNotes.value = [{ connectionName: 'DNS 接入', message: error?.message || '区域读取失败，请检查服务商接入和 API 权限' }];
   } finally {
     loading.value = false;
   }
@@ -165,7 +172,11 @@ async function loadRecords() {
       connectionId: activeZone.value?.connectionId,
     });
     records.value = res.items || [];
+    recordsError.value = '';
     selectedKeys.value = [];
+  } catch (error: any) {
+    records.value = [];
+    recordsError.value = error?.message || '记录读取失败，请检查 Cloudflare DNS Read 权限';
   } finally {
     loading.value = false;
   }
@@ -485,6 +496,16 @@ const providerOptions = computed(() => {
       </Space>
     </template>
 
+    <Alert
+      v-for="note in zoneNotes"
+      :key="note.connectionId"
+      class="mb-3"
+      show-icon
+      type="warning"
+      :message="`${note.connectionName || 'DNS 接入'}：${note.message}`"
+      description="Cloudflare 至少需要 Zone Read 与 DNS Read，且该 API Token 必须覆盖目标账户和区域；新增或修改记录还需要 DNS Write。"
+    />
+
     <div class="flex gap-4">
       <Card
         :bordered="true"
@@ -555,6 +576,14 @@ const providerOptions = computed(() => {
             >
           </div>
         </template>
+
+        <Alert
+          v-if="recordsError"
+          class="mb-3"
+          show-icon
+          type="error"
+          :message="recordsError"
+        />
         <template #extra>
           <span class="text-xs text-slate-400">
             {{ records.length }} 条

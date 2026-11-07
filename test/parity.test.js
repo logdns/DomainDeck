@@ -40,7 +40,13 @@ async function fixture(callback, options = {}) {
     if (parsed.pathname.endsWith('/contacts')) return Response.json({ contactId: 'contact-id' });
     if (parsed.hostname === 'api.porkbun.com' && parsed.pathname.endsWith('/domain/listAll')) return Response.json({ status: 'SUCCESS', domains: [{ domain: 'porkbun.example' }] });
     if (parsed.pathname.endsWith('/registrar/domain-check')) return Response.json({ success: true, result: { domains: [{ name: payload.domains[0], registrable: true, pricing: { registration_cost: '9.99', renewal_cost: '10.99', currency: 'USD' } }] } });
+    if (parsed.pathname.endsWith('/registrar/registrations') && settings.method === 'POST') return Response.json({ success: true, result: { domain_name: payload.domain_name, state: 'in_progress', completed: false } }, { status: 202 });
+    if (parsed.pathname.endsWith('/registration-status')) return Response.json({ success: true, result: { state: 'succeeded', completed: true } });
+    if (parsed.pathname.endsWith('/transfer-in') && settings.method === 'POST') return Response.json({ success: true, result: { domain_name: parsed.pathname.split('/').at(-2), state: 'pending', completed: false } }, { status: 202 });
+    if (parsed.pathname.endsWith('/transfer-in-status')) return Response.json({ success: true, result: { domain_name: parsed.pathname.split('/').at(-2), state: 'blocked', completed: false, context: { action: 'await losing registrar' } } });
     if (parsed.pathname.includes('/billing/profile')) return Response.json({ success: true, result: { card_number: '4111111111111111', card_expiry_year: 2030, card_expiry_month: 1 } });
+    if (parsed.pathname === '/client/v4/zones' && parsed.searchParams.has('name')) return Response.json({ success: true, result: [{ id: 'b'.repeat(32), name: parsed.searchParams.get('name'), status: 'active' }] });
+    if (parsed.pathname.endsWith('/dnssec')) return Response.json({ success: true, result: { status: 'disabled' } });
     if (parsed.pathname.includes('/zones')) return Response.json({ success: true, result: [], result_info: { total_pages: 1 } });
     return Response.json({ ok: true });
   };
@@ -107,6 +113,106 @@ test('purchases require billing enablement, confirmation and matching quote; ret
   assert.equal((await call('/orders/sync', 'POST')).status, 200);
   assert.equal((await call('/orders')).data[0].status, 'completed');
 }));
+
+test('Cloudflare Registrar checks live availability, completes suffixes and safely tracks API registrations', async () => fixture(async ({ call, add, requests }) => {
+  const connectionId = await add('cloudflare');
+  const quote = await call('/availability?domain=cloudflaretestcom');
+  assert.equal(quote.status, 200);
+  assert.equal(quote.data.domain, 'cloudflaretest.com');
+  await call('/settings', 'PUT', { safety: { billingEnabled: true } });
+  const purchase = { domain: 'cloudflaretestcom', connectionId, years: 1, confirm: true, requestId: 'cloudflare-purchase-001', expectedPrice: { amount: '9.99', currency: 'USD' }, autoRenew: true };
+  const created = await call('/register', 'POST', purchase);
+  assert.equal(created.status, 200, created.message);
+  assert.equal(created.data.order.domain, 'cloudflaretest.com');
+  assert.equal(created.data.order.status, 'pending');
+  assert.equal(created.data.order.operationId, 'cloudflaretest.com');
+  assert.equal((await call('/register', 'POST', { ...purchase, requestId: 'cloudflare-purchase-002', years: 2 })).status, 409);
+  const registration = requests.find((entry) => new URL(entry.url).pathname.endsWith('/registrar/registrations') && entry.settings.method === 'POST');
+  assert.deepEqual(registration.payload, { domain_name: 'cloudflaretest.com', auto_renew: true });
+  const sync = await call('/orders/sync', 'POST');
+  assert.equal(sync.status, 200);
+  assert.equal((await call('/orders')).data[0].status, 'completed');
+}));
+
+test('Cloudflare Registrar transfers require explicit unpriced consent, preflight and keep EPP secrets out of storage', async () => fixture(async ({ call, add, requests, database }) => {
+  const connectionId = await add('cloudflare');
+  await call('/settings', 'PUT', { safety: { billingEnabled: true } });
+  const quote = await call('/transfer/quotes?domain=move.example.com');
+  assert.equal(quote.status, 200);
+  assert.equal(quote.data.quotes[0].supports.transfer, true);
+  assert.equal(quote.data.quotes[0].transferReady, true);
+  assert.equal(quote.data.quotes[0].transferPriceUnknown, true);
+  assert.equal(quote.data.quotes[0].prices.transfer, null);
+  const payload = { domain: 'move.example.com', connectionId, authCode: 'dummy-epp-secret', confirm: true, requestId: 'cloudflare-transfer-0001', autoRenew: true };
+  assert.equal((await call('/transfer', 'POST', payload)).status, 409);
+  const submitted = await call('/transfer', 'POST', { ...payload, acceptUnpriced: true });
+  assert.equal(submitted.status, 200, submitted.message);
+  assert.equal(submitted.data.order.status, 'pending');
+  assert.equal(submitted.data.order.operationId, 'move.example.com');
+  const write = requests.find((entry) => new URL(entry.url).pathname.endsWith('/transfer-in'));
+  assert.deepEqual(write.payload, { auth_code: Buffer.from('dummy-epp-secret').toString('base64'), auto_renew: true });
+  const stored = database.prepare('SELECT details_json FROM orders WHERE domain=?').get('move.example.com').details_json;
+  assert.equal(stored.includes('dummy-epp-secret'), false);
+  assert.equal(JSON.stringify((await call('/audit')).data).includes('dummy-epp-secret'), false);
+  const synced = await call('/orders/sync', 'POST');
+  assert.equal(synced.status, 200);
+  assert.equal((await call('/orders')).data[0].details.officialStatus, 'blocked');
+  const statusCall = requests.find((entry) => new URL(entry.url).pathname.endsWith('/transfer-in-status'));
+  assert.ok(statusCall);
+  assert.ok(!requests.some((entry) => entry.url.includes('/domain-check')));
+}));
+
+test('Cloudflare UK transfer skips EPP code and remains zero-price-unconfirmed with explicit consent', async () => fixture(async ({ call, add, requests }) => {
+  const connectionId = await add('cloudflare');
+  await call('/settings', 'PUT', { safety: { billingEnabled: true } });
+  const result = await call('/transfer', 'POST', { domain: 'move.example.uk', connectionId, confirm: true, requestId: 'cloudflare-transfer-uk-0001', acceptUnpriced: true, authCode: 'stale-unused-code' });
+  assert.equal(result.status, 200, result.message);
+  const write = requests.find((entry) => new URL(entry.url).pathname.endsWith('/transfer-in'));
+  assert.deepEqual(write.payload, { auto_renew: false });
+}));
+
+for (const state of ['blocked', 'action_required', 'failed', 'succeeded']) {
+  test(`Cloudflare transfer ${state} preserves review and replay controls without resubmitting`, async () => {
+    let submissions = 0;
+    let statusReads = 0;
+    await fixture(async ({ call, add }) => {
+      const connectionId = await add('cloudflare');
+      await call('/settings', 'PUT', { safety: { billingEnabled: true } });
+      const purchase = { domain: 'move.example', connectionId, confirm: true, requestId: `cf-transfer-state-${state.replaceAll('_', '-')}`, acceptUnpriced: true, authCode: 'dummy-epp' };
+      const accepted = await call('/transfer', 'POST', purchase);
+      assert.equal(accepted.status, 200, accepted.message);
+      const orderId = accepted.data.order.id;
+      const sync = await call('/orders/sync', 'POST');
+      assert.equal(sync.data.checked, 1);
+      const order = (await call('/orders')).data[0];
+      assert.equal(order.status, ['action_required', 'failed'].includes(state) ? 'needs-review' : state === 'succeeded' ? 'completed' : 'pending');
+      assert.equal(order.details.officialStatus, state);
+      assert.ok(!JSON.stringify(order).includes('dummy-secret-context'));
+      assert.equal((await call('/transfer', 'POST', purchase)).data.replay, true);
+      assert.equal(submissions, 1);
+      if (state !== 'succeeded') assert.equal((await call('/transfer', 'POST', { ...purchase, requestId: `cf-another-transfer-${state.replaceAll('_', '-')}` })).status, 409);
+      await call('/orders/sync', 'POST');
+      assert.equal(statusReads, state === 'blocked' ? 2 : 1);
+      if (['action_required', 'failed'].includes(state)) {
+        assert.equal((await call(`/orders/${orderId}/sync`, 'POST')).data.checked, 1);
+        assert.equal(statusReads, 2);
+      }
+    }, { transport: async (url, settings) => {
+      const parsed = new URL(url);
+      if (parsed.pathname.endsWith('/zones')) return Response.json({ success: true, result: [{ name: 'move.example', id: 'b'.repeat(32), status: 'active' }] });
+      if (parsed.pathname.endsWith('/dnssec')) return Response.json({ success: true, result: { status: 'disabled' } });
+      if (parsed.pathname.endsWith('/transfer-in') && settings.method === 'POST') {
+        submissions += 1;
+        return Response.json({ success: true, result: { state: 'pending', completed: false } }, { status: 202 });
+      }
+      if (parsed.pathname.endsWith('/transfer-in-status')) {
+        statusReads += 1;
+        return Response.json({ success: true, result: { state, completed: ['failed', 'succeeded'].includes(state), context: { action: 'dummy-secret-context' } } });
+      }
+      throw new Error('Unexpected request; transfer must not call domain-check');
+    } });
+  });
+}
 
 test('unconfirmed purchase outcome is retained for manual reconciliation, never retried implicitly', async () => {
   let writes = 0;
@@ -415,6 +521,7 @@ test('Spaceship renewal fetches authoritative expiry and transfer omits registra
   const domain = (await call('/domains')).data[0];
   await call(`/domains/${domain.id}`, 'PATCH', { expiresAt: '2029-01-01' });
   await call('/settings', 'PUT', { safety: { billingEnabled: true } });
+  assert.equal((await call('/transfer', 'POST', { domain: 'incoming.example.uk', connectionId, requestId: 'spaceship-uk-epp-required', confirm: true, expectedPrice: price, contacts: { registrant: 'contact-one' } })).status, 400);
   const renewal = await call(`/domains/${domain.id}/renew`, 'POST', { requestId: 'renewal-request-0001', confirm: true, expectedPrice: price });
   assert.equal(renewal.status, 200, renewal.message);
   const write = requests.find((entry) => entry.url.endsWith('/renew'));

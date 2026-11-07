@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Resolver } from 'node:dns/promises';
-import { domainName, dnsName } from './providers.js';
+import { domainName, dnsName, searchDomainName } from './providers.js';
 import { adapterFor } from './registry.js';
 import { HttpError, requireValue } from './errors.js';
 import { audit, setting, text } from './store.js';
@@ -19,7 +19,7 @@ export function priceOf(result, kind, years = 1) {
   }
   if (raw?.domains) {
     const entry = raw.domains[0];
-    amount = entry?.pricing?.[kind === 'register' ? 'registration_cost' : 'renewal_cost'];
+    amount = kind === 'register' ? entry?.pricing?.registration_cost : kind === 'renew' ? entry?.pricing?.renewal_cost : undefined;
     currency = entry?.pricing?.currency;
   }
   if (amount === undefined && raw?.priceInDefaultCurrency?.finalPrice && years === 1) return raw.priceInDefaultCurrency.finalPrice;
@@ -31,8 +31,12 @@ function orderView(row) {
   return { id: row.id, connectionId: row.connection_id, domain: row.domain, kind: row.kind, status: row.status, operationId: row.operation_id, details: JSON.parse(row.details_json), created_at: row.created_at, updated_at: row.updated_at };
 }
 
-async function quote(adapter, name, years) {
+async function quote(adapter, name, years, transfer = false) {
   if (adapter.manifest && !adapter.manifest.ops.availability && !adapter.manifest.ops.pricing) return { availability: null, prices: { register: null, renew: null, transfer: null }, unpriced: true };
+  if (transfer && adapter.provider === 'cloudflare') {
+    const preflight = (await adapter.execute('transferPreflight', { domain: name })).result;
+    return { availability: preflight.ready ? { result: 'available' } : { result: 'unexpectedError', reason: preflight.reason }, transferReady: preflight.ready, transferBlockReason: preflight.reason || '', transferPriceUnknown: true, prices: { register: null, renew: null, transfer: null } };
+  }
   let availability;
   let pricing;
   try { availability = await adapter.execute('availability', { domain: name }); }
@@ -46,7 +50,7 @@ export async function commerceResource(database, context) {
   const log = (action, target) => audit(database, user, action, target);
   if (path === '/api/v1/registrars' && method === 'GET') return database.prepare("SELECT id,name,COALESCE(NULLIF(provider_ref,''),provider) AS provider FROM connections WHERE enabled=1 AND (roles_json IS NULL OR EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value='registrar')) ORDER BY is_default DESC,name").all();
   if (method === 'GET' && ['/api/v1/availability', '/api/v1/transfer/quotes'].includes(path)) {
-    const name = domainName(query.get('domain'));
+    const name = searchDomainName(query.get('domain'));
     const years = Number(query.get('years') || 1);
     requireValue(Number.isInteger(years) && years >= 1 && years <= 10, 'Invalid term');
     const connections = database.prepare("SELECT id,name,provider,provider_ref FROM connections WHERE enabled=1 AND (roles_json IS NULL OR EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value='registrar')) ORDER BY is_default DESC,name").all();
@@ -54,7 +58,8 @@ export async function commerceResource(database, context) {
     for (const bound of connections.filter((row) => !query.get('connectionId') || row.id === query.get('connectionId'))) {
       try {
         const { adapter } = adapterFor(database, context, bound.id);
-        quotes.push({ connectionId: bound.id, connectionName: bound.name, provider: bound.provider_ref || bound.provider, supports: Object.fromEntries(['register', 'renew', 'transfer'].map((kind) => [kind, adapter.manifest ? Boolean(adapter.manifest.ops[kind]) : adapter.provider !== 'cloudflare'])), ...(await quote(adapter, name, years)) });
+        const transfer = path === '/api/v1/transfer/quotes';
+        quotes.push({ connectionId: bound.id, connectionName: bound.name, provider: bound.provider_ref || bound.provider, supports: Object.fromEntries(['register', 'renew', 'transfer'].map((kind) => [kind, adapter.manifest ? Boolean(adapter.manifest.ops[kind]) : adapter.provider === 'cloudflare' ? kind === 'register' || kind === 'transfer' : true])), ...(await quote(adapter, name, years, transfer)) });
       } catch { quotes.push({ connectionId: bound.id, connectionName: bound.name, error: 'Provider rejected quote or does not expose pricing' }); }
     }
     return { domain: name, years, quotes };
@@ -66,7 +71,7 @@ export async function commerceResource(database, context) {
     requireValue(body.confirm === true, 'Explicit billing confirmation required');
     requireValue(typeof body.requestId === 'string' && /^[a-zA-Z0-9-]{16,80}$/.test(body.requestId), 'A unique requestId is required');
     const domain = actionMatch ? database.prepare('SELECT * FROM domains WHERE id=? OR name=?').get(actionMatch[1], actionMatch[1]) : null;
-    const name = domainName(domain?.name || body.domain);
+    const name = domain?.name || searchDomainName(body.domain);
     const connectionId = body.connectionId || domain?.connection_id || database.prepare('SELECT id FROM connections WHERE enabled=1 ORDER BY is_default DESC LIMIT 1').get()?.id;
     requireValue(connectionId, 'Select a registrar connection');
     const years = Number(body.years || 1);
@@ -80,20 +85,30 @@ export async function commerceResource(database, context) {
     requireValue(!database.prepare("SELECT id FROM orders WHERE connection_id=? AND domain=? AND kind=? AND status IN ('submitting','pending','needs-review') LIMIT 1").get(connectionId, name, billingKind), 'An unresolved order already exists for this domain. Reconcile it before creating another purchase.', 409);
     const { adapter, bound } = adapterFor(database, context, connectionId);
     requireValue(!bound.roles_json || JSON.parse(bound.roles_json).includes('registrar'), 'This connection is configured for DNS only', 409);
-    requireValue(adapter.provider !== 'cloudflare', 'Cloudflare purchases must be completed in its dashboard', 409);
     requireValue(!adapter.manifest || adapter.manifest.ops[billingKind] && adapter.manifest.capabilities?.[billingKind] !== false, 'This provider does not expose that purchase operation', 409);
+    requireValue(adapter.provider !== 'cloudflare' || billingKind === 'register' && years === 1 || billingKind === 'transfer', 'Cloudflare API supports one-year registrations and domain transfers only', 409);
     const contacts = { ...setting(database, 'contacts'), ...(body.contacts || {}) };
     if (adapter.provider === 'spaceship' && billingKind !== 'renew') {
       requireValue(typeof contacts.registrant === 'string' && contacts.registrant.length > 0, 'Registrant contact ID required');
       for (const field of ['admin', 'tech', 'billing']) if (!contacts[field]) contacts[field] = contacts.registrant;
     }
-    if (billingKind === 'transfer') requireValue(typeof body.authCode === 'string' && body.authCode.length > 0 && body.authCode.length <= 200, 'Transfer authorization code required');
+    const isUkDomain = adapter.provider === 'cloudflare' && billingKind === 'transfer' && name.endsWith('.uk');
+    if (billingKind === 'transfer' && adapter.provider === 'cloudflare') {
+      const preflight = (await adapter.execute('transferPreflight', { domain: name })).result;
+      requireValue(preflight.ready, preflight.reason || 'Cloudflare transfer prerequisites are not met', 409);
+    }
+    if (billingKind === 'transfer' && !isUkDomain) requireValue(typeof body.authCode === 'string' && body.authCode.trim().length > 0 && body.authCode.length <= 200, 'Transfer authorization code required');
+    if (billingKind === 'transfer' && body.contactExtensions !== undefined) requireValue(body.contactExtensions && typeof body.contactExtensions === 'object' && !Array.isArray(body.contactExtensions) && Buffer.byteLength(JSON.stringify(body.contactExtensions)) <= 8192, 'Invalid transfer contact extensions');
     if (billingKind === 'transfer' && adapter.provider === 'spaceship') requireValue(body.authCode.length <= 50, 'Spaceship authorization code must be at most 50 characters');
-    const pricing = adapter.manifest && !adapter.manifest.ops.pricing && !adapter.manifest.ops.availability ? {} : await adapter.execute(adapter.provider === 'spaceship' || adapter.manifest?.ops.pricing ? 'pricing' : 'availability', { domain: name });
+    const pricing = adapter.provider === 'cloudflare' && billingKind === 'transfer' || adapter.manifest && !adapter.manifest.ops.pricing && !adapter.manifest.ops.availability ? {} : await adapter.execute(adapter.provider === 'spaceship' || adapter.manifest?.ops.pricing ? 'pricing' : 'availability', { domain: name });
+    if (adapter.provider === 'cloudflare' && billingKind === 'register') {
+      const checked = pricing.result?.domains?.find((item) => item.name?.toLowerCase() === name);
+      requireValue(checked?.registrable === true, checked?.reason || 'Cloudflare could not confirm this domain is registrable through its API', 409);
+    }
     const price = priceOf(pricing, billingKind, years);
     if (price) requireValue(body.expectedPrice && String(body.expectedPrice.currency).toUpperCase() === price.currency && Number(body.expectedPrice.amount) === Number(price.amount), 'Price changed or quote missing; query again', 409);
-    else requireValue(body.acceptUnpriced === true && Boolean(adapter.manifest), 'No verified quote is available; provider billing is blocked', 409);
-    const input = { ...(billingKind === 'register' ? { years } : {}), autoRenew: body.autoRenew === true, contacts, privacyProtection: { level: body.privacyLevel === 'public' ? 'public' : 'high', userConsent: true }, ...(billingKind === 'transfer' ? { authCode: body.authCode } : {}) };
+    else requireValue(body.acceptUnpriced === true && (Boolean(adapter.manifest) || adapter.provider === 'cloudflare' && billingKind === 'transfer'), 'No verified quote is available; provider billing is blocked', 409);
+    const input = { ...(billingKind === 'register' ? { years } : {}), autoRenew: body.autoRenew === true, contacts, privacyProtection: { level: body.privacyLevel === 'public' ? 'public' : 'high', userConsent: true }, ...(billingKind === 'transfer' && body.authCode ? { authCode: body.authCode } : {}), ...(billingKind === 'transfer' && body.contactExtensions ? { contactExtensions: body.contactExtensions } : {}) };
     if (billingKind === 'renew' && adapter.provider === 'spaceship') {
       input.currentExpirationDate = (await adapter.execute('getDomain', { domain: name })).result.expirationDate;
       requireValue(typeof input.currentExpirationDate === 'string' && Number.isFinite(Date.parse(input.currentExpirationDate)), 'Provider did not return the current expiration date', 502);
@@ -105,7 +120,9 @@ export async function commerceResource(database, context) {
     log(`domain.${billingKind}.submit`, name);
     try {
       const response = await adapter.execute(billingKind, { domain: name, years, input, expectedAmount: price ? adapter.provider === 'porkbun' ? (Number(price.amount) / years).toFixed(2) : price.amount : undefined });
-      database.prepare('UPDATE orders SET status=?,operation_id=?,updated_at=? WHERE id=?').run(response.operationId || response.accepted ? 'pending' : 'completed', response.operationId || '', new Date().toISOString(), id);
+      const status = adapter.provider === 'cloudflare' && ['action_required', 'failed'].includes(response.state) ? 'needs-review' : response.operationId || response.accepted ? 'pending' : 'completed';
+      const acceptedDetails = { ...details, ...(adapter.provider === 'cloudflare' && ['pending', 'in_progress', 'blocked', 'action_required', 'succeeded', 'failed'].includes(response.state) ? { officialStatus: response.state } : {}) };
+      database.prepare('UPDATE orders SET status=?,operation_id=?,details_json=?,updated_at=? WHERE id=?').run(status, response.operationId || '', JSON.stringify(acceptedDetails), new Date().toISOString(), id);
       log(`domain.${billingKind}.accepted`, name);
       if (billingKind === 'renew') await context.notifications?.renewal(name).catch(() => {});
     } catch {
@@ -150,16 +167,22 @@ export async function commerceResource(database, context) {
   if (path === '/api/v1/orders' && method === 'GET') return database.prepare('SELECT * FROM orders ORDER BY created_at DESC LIMIT 1000').all().map(orderView);
   const orderMatch = /^\/api\/v1\/orders\/([a-zA-Z0-9-]+)(?:\/(sync))?$/.exec(path);
   if ((path === '/api/v1/orders/sync' && method === 'POST') || (orderMatch?.[2] && method === 'POST')) {
-    const rows = orderMatch?.[2] ? database.prepare('SELECT * FROM orders WHERE id=?').all(orderMatch[1]) : database.prepare("SELECT * FROM orders WHERE status IN ('pending','submitting','needs-review') AND operation_id!='' LIMIT 100").all();
-    requireValue(!orderMatch || rows.length, 'Order not found', 404);
-    requireValue(!orderMatch || rows[0].operation_id, 'This order has no asynchronous operation; reconcile it manually', 409);
+    const singleOrderSync = Boolean(orderMatch?.[2]);
+    const rows = singleOrderSync ? database.prepare('SELECT * FROM orders WHERE id=?').all(orderMatch[1]) : database.prepare("SELECT * FROM orders WHERE status IN ('pending','submitting','needs-review') AND operation_id!='' LIMIT 100").all();
+    requireValue(!singleOrderSync || rows.length, 'Order not found', 404);
+    requireValue(!singleOrderSync || rows[0].operation_id, 'This order has no asynchronous operation; reconcile it manually', 409);
     const results = [];
     for (const row of rows) {
       if (!row.operation_id || !row.connection_id) continue;
       try {
-        const result = (await adapterFor(database, context, row.connection_id).adapter.execute('operation', { operationId: row.operation_id })).result;
-        const status = result.status === 'success' ? 'completed' : result.status === 'failed' ? 'failed' : 'pending';
-        database.prepare('UPDATE orders SET status=?,updated_at=? WHERE id=?').run(status, new Date().toISOString(), row.id);
+        const { adapter } = adapterFor(database, context, row.connection_id);
+        const priorDetails = JSON.parse(row.details_json);
+        if (!singleOrderSync && adapter.provider === 'cloudflare' && ['action_required', 'failed'].includes(priorDetails.officialStatus)) continue;
+        const result = (await adapter.execute('operation', { operationId: row.operation_id, kind: row.kind })).result;
+        const state = result.state || result.status;
+        const status = adapter.provider === 'cloudflare' && ['action_required', 'failed'].includes(state) ? 'needs-review' : ['success', 'succeeded', 'completed'].includes(state) ? 'completed' : state === 'failed' ? 'failed' : 'pending';
+        const details = { ...priorDetails, officialStatus: ['pending', 'in_progress', 'blocked', 'action_required', 'succeeded', 'success', 'completed', 'failed'].includes(state) ? state : '' };
+        database.prepare('UPDATE orders SET status=?,details_json=?,updated_at=? WHERE id=?').run(status, JSON.stringify(details), new Date().toISOString(), row.id);
         results.push({ id: row.id, ok: true, status });
       } catch { results.push({ id: row.id, ok: false, message: 'Provider operation unavailable; order unchanged' }); }
     }
