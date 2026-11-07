@@ -162,8 +162,13 @@ export async function commerceResource(database, context) {
     const connectionId = query.get('connectionId') || database.prepare('SELECT connection_id FROM domains WHERE name=?').get(name)?.connection_id || database.prepare("SELECT connection_id FROM orders WHERE domain=? AND kind='transfer' ORDER BY created_at DESC LIMIT 1").get(name)?.connection_id;
     return (await adapterFor(database, context, connectionId).adapter.execute('transferInfo', { domain: name })).result;
   }
-  const operationMatch = /^\/api\/v1\/operations\/([a-zA-Z0-9_-]+)$/.exec(path);
-  if (operationMatch && method === 'GET') return (await adapterFor(database, context, query.get('connectionId')).adapter.execute('operation', { operationId: operationMatch[1] })).result;
+  const operationMatch = /^\/api\/v1\/operations\/([a-zA-Z0-9_.-]+)$/.exec(path);
+  if (operationMatch && method === 'GET') {
+    const connectionId = query.get('connectionId');
+    const order = database.prepare('SELECT connection_id,kind FROM orders WHERE operation_id=? AND (? IS NULL OR connection_id=?) ORDER BY created_at DESC LIMIT 1').get(operationMatch[1], connectionId, connectionId);
+    requireValue(connectionId || order?.connection_id, 'Operation not found; supply its registrar connection', 404);
+    return (await adapterFor(database, context, connectionId || order?.connection_id).adapter.execute('operation', { operationId: operationMatch[1], kind: order?.kind || query.get('kind') })).result;
+  }
   if (path === '/api/v1/orders' && method === 'GET') return database.prepare('SELECT * FROM orders ORDER BY created_at DESC LIMIT 1000').all().map(orderView);
   const orderMatch = /^\/api\/v1\/orders\/([a-zA-Z0-9-]+)(?:\/(sync))?$/.exec(path);
   if ((path === '/api/v1/orders/sync' && method === 'POST') || (orderMatch?.[2] && method === 'POST')) {

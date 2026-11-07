@@ -126,6 +126,7 @@ test('Cloudflare Registrar checks live availability, completes suffixes and safe
   assert.equal(created.data.order.domain, 'cloudflaretest.com');
   assert.equal(created.data.order.status, 'pending');
   assert.equal(created.data.order.operationId, 'cloudflaretest.com');
+  assert.equal((await call('/operations/cloudflaretest.com')).data.state, 'succeeded');
   assert.equal((await call('/register', 'POST', { ...purchase, requestId: 'cloudflare-purchase-002', years: 2 })).status, 409);
   const registration = requests.find((entry) => new URL(entry.url).pathname.endsWith('/registrar/registrations') && entry.settings.method === 'POST');
   assert.deepEqual(registration.payload, { domain_name: 'cloudflaretest.com', auto_renew: true });
@@ -159,6 +160,8 @@ test('Cloudflare Registrar transfers require explicit unpriced consent, prefligh
   assert.equal((await call('/orders')).data[0].details.officialStatus, 'blocked');
   const statusCall = requests.find((entry) => new URL(entry.url).pathname.endsWith('/transfer-in-status'));
   assert.ok(statusCall);
+  assert.equal((await call('/operations/move.example.com')).data.state, 'blocked');
+  assert.equal((await call('/operations/not-found.example')).status, 404);
   assert.ok(!requests.some((entry) => entry.url.includes('/domain-check')));
 }));
 
