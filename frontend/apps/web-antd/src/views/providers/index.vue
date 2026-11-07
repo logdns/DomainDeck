@@ -746,13 +746,17 @@ const CAP_LABEL: Array<{ key: string; label: string }> = [
 
         <details
           v-if="activeProvider?.setup?.length"
+          :key="activeProvider.id"
+          open
           class="col-span-2 rounded border border-slate-200 bg-slate-50 px-3 py-2"
         >
           <summary
             class="flex cursor-pointer flex-wrap items-center justify-between gap-2 text-xs text-slate-600"
           >
             <span>
-              <span class="font-medium text-slate-700">凭据怎么获取</span>
+              <span class="font-medium text-slate-700"
+                >凭据获取与权限设置（请先阅读）</span
+              >
               <span class="ml-1 text-slate-400"
                 >{{ activeProvider.setup.length }} 步</span
               >
@@ -768,6 +772,16 @@ const CAP_LABEL: Array<{ key: string; label: string }> = [
               打开 {{ activeProvider.name }} 密钥页 ↗
             </a>
           </summary>
+          <div class="my-3 flex flex-wrap gap-3 text-sm">
+            <a
+              v-if="activeProvider.docs"
+              :href="activeProvider.docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              >{{ activeProvider.name }} 官方 API 文档 ↗</a
+            >
+            <span class="text-amber-700">{{ activeProvider.hint }}</span>
+          </div>
           <ol class="setup-list">
             <li v-for="(step, i) in activeProvider.setup" :key="i">
               <span class="setup-idx">{{

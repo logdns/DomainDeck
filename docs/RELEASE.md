@@ -1,27 +1,21 @@
-# DomainDeck 3.0.0-beta.9
+# DomainDeck 3.0.0-beta.10
 
-完善后台「版本与更新」，使用 GitHub Releases 自动下载和校验更新包。
+- 服务商接入弹窗默认展开凭据获取与权限指引，逐字段展示用途、格式和官方入口。
+- Spaceship：明确读取、DNS 写入、计费、转移、联系人及异步状态权限。
+- Porkbun：补充逐域名 API Access、密钥权限、域名/IP 范围与测试限制。
+- Cloudflare：区分 DNS 和 Registrar 权限、Account ID 与 Zone ID，说明注册/转入条件。
+- GoDaddy：标明当前 v1 模板需要 Production Classic Key/Secret，不能填写 v3 PAT；Namecheap：说明生产 API 开通及服务器出口 IPv4 白名单。
+- 自定义模板文档链接只允许不含账户密码的 HTTPS URL，拒绝脚本、data 和明文 HTTP 链接。
+- 重写 README 和当前接入文档，清除旧版迁移对照及历史说明；发布页仅保留 beta.8 及更新版本。
 
-- 点击「检查更新」持续显示最新版本、发布时间、包大小与更新说明；没有新版也显示明确结果。
-- systemd 安装的管理员发现新版后自动下载并校验 SHA-256，显示「下载完成，校验通过」。
-- 点击「更新到版本号」并确认后，备份数据库、切换程序并自动重启；取消不会替换当前程序。
-- 下载失败显示错误并提供「重新下载」；已校验的包直接用于安装，不重复下载。
-- 刷新页面保留本次检查及下载状态。重启服务或检查超过 10 分钟后，需重新检查。
-- 保留只读权限、手动安装限制、固定 GitHub 仓库、版本核对与更新包路径校验。
+## 安装和升级
 
-## 安装
+下载 `DomainDeck-node-linux.tar.gz` 与 `SHA256SUMS.txt`，核对摘要后解压并运行 `sudo bash deploy/install.sh --public-origin https://你的实际域名`。
 
-下载 `DomainDeck-node-linux.tar.gz` 和 `SHA256SUMS.txt`，校验后解压并运行：
+beta.8、beta.9 的 systemd 安装可通过后台「检查更新」下载校验并确认升级。手动运行使用完整包重新运行安装器。升级前备份 `/var/lib/domaindeck-node`；安装器保留账户、数据库、密钥和公开站点配置。
 
-```sh
-sha256sum --check --ignore-missing SHA256SUMS.txt
-sudo bash deploy/install.sh --public-origin https://你的实际域名
-```
+## 验证范围
 
-beta.6–beta.8 的 systemd 安装可使用已有后台检查和更新按钮升级到本版。beta.1–beta.5 首次升级需用完整包重新运行安装器。升级前备份 `/var/lib/domaindeck-node`；安装器保留账户、数据库、密钥和站点配置。新版流程在升级后生效。
+Actions 对 Vben 执行类型检查、单元测试和生产构建；对后端执行 x64/ARM64 测试、安装器检查、打包与摘要校验；Chromium 验证桌面、手机、五家接入指引及更新流程。新增安全回归验证自定义文档链接过滤和预设覆盖隔离。
 
-## 验证边界
-
-GitHub Actions 执行 Vben 类型检查、前后端测试、生产构建、x64/ARM64 隔离打包和 Chromium 桌面/手机回归。更新浏览器测试使用虚构 GitHub 响应，验证检查、自动下载、取消、确认、备份及重启回调，不会操作实际部署。
-
-本版保留 Cloudflare DNS/Registrar 注册及转入、Spaceship 和 Porkbun 接入。真实注册商扣费、通知投递和实机 systemd 自启需部署者验证；测试版不等同于外部独立安全审计。
+使用虚构账户和模拟服务商；真实扣费、外发通知和实机 systemd 自启不属于模拟测试结果。本次为改动范围的专项安全检查，不等同于独立完整审计；依赖审计结果见 Actions 和 [安全说明](SECURITY.md)。

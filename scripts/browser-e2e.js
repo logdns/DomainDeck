@@ -116,6 +116,23 @@ try {
   assert.equal(database.prepare('SELECT status FROM orders').get().status, 'pending');
   await visit('/providers');
   assert.ok((await page.locator('body').textContent()).includes('Porkbun'));
+  const guideChecks = [
+    ['Spaceship', 'domains:billing'], ['Porkbun', 'Opt In All Domains'],
+    ['Cloudflare', 'Registrar write'], ['GoDaddy', '不能填 PAT'], ['Namecheap', '公网出口 IPv4'],
+  ];
+  for (const [name, expected] of guideChecks) {
+    const card = page.locator('.provider-box').filter({ hasText: name });
+    const addButton = card.getByRole('button', { name: '添加该服务商', exact: true });
+    await addButton.last().click();
+    const dialog = page.getByRole('dialog');
+    const guide = dialog.locator('details[open]');
+    await guide.waitFor({ state: 'visible' });
+    assert.ok((await guide.textContent()).includes(expected), name);
+    assert.ok(await guide.locator('a[href^="https://"]').count() >= 2, name);
+    await dialog.getByRole('button', { name: /^取\s*消$/ }).click();
+    await dialog.waitFor({ state: 'hidden' });
+  }
+  console.log('Browser registrar credential and permission guides OK');
   const syncResponse = page.waitForResponse((response) => response.url().includes('/api/vben/connections/') && response.url().endsWith('/sync'));
   await page.getByRole('button', { name: '同步域名', exact: true }).first().click();
   assert.equal((await syncResponse).status(), 200);

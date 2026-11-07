@@ -2,6 +2,7 @@ import { ManifestProvider, validateManifest } from './manifests.js';
 import { Provider } from './providers.js';
 import { connection } from './store.js';
 import { requireValue } from './errors.js';
+import { providerGuides } from './provider-guides.js';
 
 export const builtins = [
   { id: 'porkbun', name: 'Porkbun', docs: 'https://porkbun.com/api/json/v3/documentation', credentialsUrl: 'https://porkbun.com/account/api', setup: ['Create API key and secret.', 'Enable API access for each managed domain.'], fields: ['apiKey', 'secretKey'], capabilities: ['domains', 'dns', 'register', 'renew', 'transfer', 'nameservers', 'autorenew', 'invoices', 'balance'] },
@@ -39,7 +40,30 @@ export const presets = [
 export function providerList(database) {
   const custom = database.prepare('SELECT manifest_json FROM provider_manifests ORDER BY id').all().map((row) => JSON.parse(row.manifest_json));
   const overridden = new Set(custom.map((item) => item.id));
-  return [...builtins, ...presets.filter((item) => !overridden.has(item.id)), ...custom].map((item) => ({ id: item.id, name: item.name, docs: item.docs || '', hint: item.hint || '', setup: item.setup || [], credentialsUrl: item.credentialsUrl || '', builtin: builtins.some((entry) => entry.id === item.id), preset: presets.some((entry) => entry.id === item.id) && !overridden.has(item.id), fields: item.fields, capabilities: Array.isArray(item.capabilities) ? item.capabilities : Object.keys(item.ops || {}).filter((operation) => item.capabilities?.[operation] !== false) }));
+  return [...builtins, ...presets.filter((item) => !overridden.has(item.id)), ...custom].map((item) => {
+    const guide = overridden.has(item.id) ? {} : providerGuides[item.id] || {};
+    const metadata = { ...item, ...guide };
+    return {
+      id: item.id, name: item.name,
+      docs: documentationURL(metadata.docs), hint: metadata.hint || '',
+      setup: (Array.isArray(metadata.setup) ? metadata.setup : []).map((step) => typeof step === 'string' ? step : { ...step, url: documentationURL(step.url) }),
+      credentialsUrl: documentationURL(metadata.credentialsUrl),
+      builtin: builtins.some((entry) => entry.id === item.id),
+      preset: presets.some((entry) => entry.id === item.id) && !overridden.has(item.id),
+      fields: item.fields.map((field) => {
+        const entry = typeof field === 'string' ? { key: field, label: field, required: true, secret: field !== 'accountId' } : field;
+        return { ...entry, ...guide.fields?.[entry.key], url: documentationURL(guide.fields?.[entry.key]?.url || entry.url) };
+      }),
+      capabilities: Array.isArray(item.capabilities) ? item.capabilities : Object.keys(item.ops || {}).filter((operation) => item.capabilities?.[operation] !== false),
+    };
+  });
+}
+
+function documentationURL(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' && !parsed.username && !parsed.password ? parsed.href : '';
+  } catch { return ''; }
 }
 
 export function manifestFor(database, id) {
