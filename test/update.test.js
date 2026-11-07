@@ -26,6 +26,15 @@ test('version ordering is numeric and stable versions follow betas', () => {
   assert.throws(() => compareVersions('2.2.1', '3.0.0'));
 });
 
+test('up-to-date and empty release checks retain the actual installation capability', async () => {
+  for (const releases of [[], [{ tag_name: 'v3.0.0-beta.8', prerelease: true }]]) {
+    for (const installDirectory of [undefined, '/fixture-managed-install']) {
+      const updater = createUpdater({ version: '3.0.0-beta.8', installDirectory, transport: async () => Response.json(releases) });
+      assert.deepEqual(await updater.check(), { available: false, current: '3.0.0-beta.8', installSupported: Boolean(installDirectory) });
+    }
+  }
+});
+
 test('update requires GitHub digest and refuses checksum mismatch without switching code', async () => {
   let calls = 0;
   const bytes = Buffer.from(JSON.stringify(bundle()));

@@ -64,7 +64,7 @@ export function createUpdater({ version, installDirectory, dataDirectory, databa
       available = null;
       const releases = JSON.parse((await download('https://api.github.com/repos/logdns/DomainDeck/releases?per_page=30', transport, { bytes: 1024 * 1024, redirects: 2 })).toString());
       const release = releases.filter((item) => !item.draft && /^v3\.\d+\.\d+(?:-beta\.\d+)?$/.test(item.tag_name) && (version.includes('-beta.') || !item.prerelease)).sort((first, second) => compareVersions(second.tag_name.slice(1), first.tag_name.slice(1)))[0];
-      if (!release || compareVersions(release.tag_name.slice(1), version) <= 0) return { available: false, current: version };
+      if (!release || compareVersions(release.tag_name.slice(1), version) <= 0) return { available: false, current: version, installSupported: Boolean(installDirectory) };
       const asset = release.assets.find((item) => item.name === 'DomainDeck-node.bundle.json');
       if (!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest || '')) throw new HttpError(502, 'Release lacks a GitHub SHA-256 digest');
       available = { version: release.tag_name.slice(1), url: asset.browser_download_url, digest: asset.digest.slice(7), checkedAt: Date.now() };
