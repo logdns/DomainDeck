@@ -1,6 +1,6 @@
 # Third-party notices
 
-The administration UI uses Vue Vben Admin 5.8 (https://github.com/vbenjs/vue-vben-admin), distributed under the MIT license. Its license is retained at `frontend/LICENSE` in source and `docs/VBEN-LICENSE` in runtime archives.
+The administration UI uses Vue Vben Admin 5.8 (https://github.com/vbenjs/vue-vben-admin), distributed under the MIT license. Its license is retained at `frontend/LICENSE` in source and `docs/VBEN-LICENSE` in runtime archives. `public/vben-license.json` retains notices in installed versions and online update bundles.
 
 The local Lucide menu icons originate from the `@iconify/json` Lucide collection. Lucide is distributed under the ISC license (https://github.com/lucide-icons/lucide/blob/main/LICENSE). Copyright (c) 2020, Lucide Contributors.
 
