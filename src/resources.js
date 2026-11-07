@@ -182,7 +182,11 @@ export async function resource(database, context) {
   if (['/api/v1/update/apply', '/api/v1/system/update/apply'].includes(path) && method === 'POST') {
     if (!updater) throw new HttpError(503, 'Updater unavailable');
     log('update.apply', context.version);
-    return updater.apply();
+    return updater.apply(body.version);
+  }
+  if (['/api/v1/update/download', '/api/v1/system/update/download'].includes(path) && method === 'POST') {
+    if (!updater?.download) throw new HttpError(503, 'Updater unavailable');
+    return updater.download(body.version);
   }
   throw new HttpError(404, 'Not found');
 }

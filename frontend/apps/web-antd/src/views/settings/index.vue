@@ -23,6 +23,7 @@ import {
   applyUpdate,
   changePassword,
   checkUpdate,
+  downloadUpdate,
   getAudit,
   getConnections,
   getSettings,
@@ -45,6 +46,17 @@ const status = ref<any>(null);
 const updState = ref<any>(null);
 const updBusy = ref(false);
 const applying = ref(false);
+const downloading = ref(false);
+const updateError = ref('');
+const updateStage = computed(() =>
+  updateError.value || updState.value?.downloadError ? '更新检查或下载失败，请重试'
+    : applying.value ? '正在备份数据库、安装并重启…'
+    : downloading.value || updState.value?.downloadState === 'downloading' ? '正在从 GitHub 下载并校验 SHA-256…'
+      : updState.value?.downloadState === 'ready' ? '下载完成，SHA-256 校验通过，可以更新'
+        : updState.value?.hasUpdate ? '发现新版本，等待下载'
+          : updState.value?.checkedAt ? '当前已是最新版本，无需更新'
+            : '点击检查更新，查询 GitHub 最新版本',
+);
 
 async function loadUpdate() {
   updState.value = await getUpdateInfo().catch(() => null);
@@ -52,6 +64,7 @@ async function loadUpdate() {
 
 async function doCheck() {
   updBusy.value = true;
+  updateError.value = '';
   try {
     const res: any = await checkUpdate();
     updState.value = {
@@ -60,20 +73,40 @@ async function doCheck() {
       hasUpdate: res.hasUpdate,
       installSupported: res.installSupported,
       checkedAt: res.checkedAt,
+      downloadState: res.downloadState,
+      downloadError: '',
       error: null,
     };
-    if (res.hasUpdate) message.success(`发现新版本 ${res.latest.version}`);
-    else message.info('当前已是最新版本');
+    if (res.hasUpdate) {
+      message.success(`发现新版本 ${res.latest.version}`);
+      if (res.installSupported && can('settings:write')) await doDownload();
+    } else message.info('当前已是最新版本');
   } catch (error: any) {
-    message.error(error?.message || '检查更新失败');
+    updateError.value = error?.message || '检查更新失败，请稍后重试';
+    message.error(updateError.value);
     await loadUpdate();
   } finally {
     updBusy.value = false;
   }
 }
 
+async function doDownload() {
+  downloading.value = true;
+  updateError.value = '';
+  try {
+    const res = await downloadUpdate(updState.value.latest.version);
+    updState.value = { ...updState.value, downloadState: res.downloadState, downloadError: '' };
+  } catch (error: any) {
+    updateError.value = error?.message || '下载或校验失败，请重新下载';
+    updState.value = { ...updState.value, downloadState: 'error' };
+  } finally {
+    downloading.value = false;
+  }
+}
+
 async function doApply() {
   applying.value = true;
+  updateError.value = '';
   try {
     const res: any = await applyUpdate({
       version: updState.value?.latest?.version,
@@ -85,7 +118,8 @@ async function doApply() {
     );
     if (res.restarting) setTimeout(() => location.reload(), 4500);
   } catch (error: any) {
-    message.error(error?.message || '更新失败');
+    updateError.value = error?.message || '更新失败，请重新检查版本';
+    message.error(updateError.value);
   } finally {
     applying.value = false;
   }
@@ -616,7 +650,8 @@ const defaultRegistrar = computed(
         <div
           class="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-3"
         >
-          <Button :loading="updBusy" :disabled="!can('settings:read')" @click="doCheck">检查更新</Button>
+          <Button :loading="updBusy" :disabled="!can('settings:read') || downloading || applying" @click="doCheck">检查更新</Button>
+          <Tag :color="updateError ? 'red' : updState?.downloadState === 'ready' || updState?.checkedAt && !updState?.hasUpdate ? 'green' : 'blue'">{{ updateStage }}</Tag>
           <span v-if="updState?.checkedAt" class="text-xs text-slate-400">
             上次检查 {{ dayjs(updState.checkedAt).format('MM-DD HH:mm') }}
           </span>
@@ -642,7 +677,7 @@ const defaultRegistrar = computed(
                 {{
                   updState.hasUpdate
                     ? `可更新到 ${updState.latest.version}`
-                    : '已是最新'
+                    : `GitHub 最新版本 ${updState.latest.version}`
                 }}
               </Tag>
               <span class="text-xs text-slate-500">
@@ -660,26 +695,34 @@ const defaultRegistrar = computed(
               </span>
             </div>
             <div v-if="updState.hasUpdate" class="flex items-center gap-3">
+              <Button
+                v-if="updState.installSupported && updState.downloadState !== 'ready'"
+                :disabled="!can('settings:write') || applying || updBusy"
+                :loading="downloading"
+                @click="doDownload"
+              >{{ updState.downloadState === 'error' ? '重新下载' : '下载更新' }}</Button>
               <Popconfirm
-                :title="`确认下载并更新到 ${updState.latest.version}？更新会备份数据库并切换程序版本。`"
+                :title="`确认更新到 ${updState.latest.version}？更新包已校验，将备份数据库、切换版本并自动重启。`"
                 ok-text="更新"
                 cancel-text="取消"
                 @confirm="doApply"
               >
                 <Button
-                  :disabled="!can('settings:write') || !updState.installSupported"
+                  :disabled="!can('settings:write') || !updState.installSupported || updState.downloadState !== 'ready' || downloading || updBusy"
                   :loading="applying"
-                  size="small"
                   type="primary"
-                  >立即更新</Button
+                  >更新到 {{ updState.latest.version }}</Button
                 >
               </Popconfirm>
             </div>
           </div>
+          <div v-if="updState.hasUpdate" class="mt-2 text-sm text-slate-500">{{ updState.downloadState === 'ready' ? '更新包已就绪；点击更新后才会替换程序并自动重启。' : '检查发现新版后自动下载；下载完成后点击更新版本。' }}</div>
           <div v-if="updState.latest.notes" class="update-notes">
             {{ updState.latest.notes }}
           </div>
         </div>
+
+        <Alert v-if="updateError || updState?.downloadError" class="mt-3" type="error" show-icon :message="updateError || updState.downloadError" />
 
         <Alert
           v-if="updState && !updState.installSupported"

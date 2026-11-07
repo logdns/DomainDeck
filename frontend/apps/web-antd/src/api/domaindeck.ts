@@ -299,9 +299,12 @@ export const getUpdateInfo = () => requestClient.get<any>('/system/update');
 /** 拉版本源，看有没有新版本 */
 export const checkUpdate = () =>
   requestClient.post<any>('/system/update/check', {});
+
+export const downloadUpdate = (version: string) =>
+  requestClient.post<any>('/system/update/download', { version }, { timeout: 120000 });
 /** 下载并切换到校验后的程序版本，由 systemd 自动重启服务 */
 export const applyUpdate = (data: { version?: string }) =>
-  requestClient.post<any>('/system/update/apply', data);
+  requestClient.post<any>('/system/update/apply', data, { timeout: 120000 });
 
 /* ---------------- 账户 / 角色 ---------------- */
 export const getAccounts = (keyword = '') =>

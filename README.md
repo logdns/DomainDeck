@@ -2,7 +2,7 @@
 
 独立重构的 **Node.js 24 + SQLite** 域名工作台。前端使用 [Vue Vben Admin 5.8](https://doc.vben.pro/)、Vue 3、Pinia、Vue Router 和 Ant Design Vue，恢复原有蓝色品牌、大字体、圆角导航、响应式布局、中英文和深色模式。发布包已包含编译后的界面，服务器无需安装前端依赖。
 
-这是 `3.0.0-beta.8` 公开测试版。原 Vben 页面通过 `/api/vben` 兼容层连接新的 SQLite 业务服务，保留 `/api/v1` API。本版修复版本更新状态、Cloudflare DNS 权限诊断、Registrar 注册/转入 API 和常见后缀补全。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
+这是 `3.0.0-beta.9` 公开测试版。原 Vben 页面通过 `/api/vben` 兼容层连接新的 SQLite 业务服务，保留 `/api/v1` API。本版完善后台更新：点击检查后显示 GitHub 最新版本，发现新版自动下载并校验，确认更新后备份数据库、切换版本并自动重启。保留 Cloudflare DNS、Registrar 注册/转入和后缀补全。请先用独立数据目录试用，再切换生产反向代理。各项能力、服务商限制和验证依据见 [旧版功能对照](docs/PARITY.md)。
 
 ## 功能
 

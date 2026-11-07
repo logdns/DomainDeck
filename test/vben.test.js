@@ -118,6 +118,8 @@ test('Vben viewer cannot see or mutate finance, account, registrar credentials o
   for (const path of ['/accounts', '/roles', '/connections', '/providers', '/payments', '/settings', '/notifications', '/audit']) assert.equal((await call(path, token)).status, 403, path);
   assert.equal((await call('/register', token, { domain: 'example.com', confirm: true })).status, 403);
   assert.equal((await call('/settings', token, { safety: { billingEnabled: true } }, 'PUT')).status, 403);
+  assert.equal((await call('/system/update/download', token, { version: '3.0.0-beta.9' })).status, 403);
+  assert.equal((await call('/system/update/apply', token, { version: '3.0.0-beta.9' })).status, 403);
 }));
 
 test('Vben order reconciliation and notification test report the actual persisted outcome', () => fixture(async ({ database, call, login }) => {

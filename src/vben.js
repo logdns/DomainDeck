@@ -158,7 +158,7 @@ export async function vbenResource(database, context) {
   if (path === '/api/v1/dns/zones' && method === 'GET') return { ...result, total: result.items.length };
   if (path === '/api/v1/lookup' && method === 'GET') return { ...result, answer: result.records, resolver: query.get('server') || 'system' };
   if (path === '/api/v1/invoices' && method === 'GET') return { ...result, items: result.items.map((item) => ({ ...item, invoiceId: item.id, hostedInvoiceUrl: item.url })) };
-  if (path === '/api/v1/system/update' && method === 'GET') return { ...result, installSupported: Boolean(result.installSupported), current: { version: result.current, runtime: process.version, platform: process.platform, managed: result.installSupported ? 'systemd' : null }, configured: true, settings: { githubRepo: 'logdns/DomainDeck', feed: '' } };
-  if (path === '/api/v1/system/update/check' && method === 'POST') return { ...result, hasUpdate: result.available, installSupported: Boolean(result.installSupported), latest: result.available ? { version: result.version, source: 'github' } : null, checkedAt: new Date().toISOString() };
+  if (path === '/api/v1/system/update' && method === 'GET') return { ...result, hasUpdate: Boolean(result.available), installSupported: Boolean(result.installSupported), current: { version: result.current, runtime: process.version, platform: process.platform, execPath: process.execPath, managed: result.installSupported ? 'systemd' : null }, configured: true, settings: { githubRepo: 'logdns/DomainDeck', feed: '' } };
+  if (path === '/api/v1/system/update/check' && method === 'POST') return { ...result, hasUpdate: result.available, installSupported: Boolean(result.installSupported), latest: result.latest || (result.available ? { version: result.version, source: 'github' } : null), checkedAt: result.checkedAt || new Date().toISOString() };
   return result;
 }

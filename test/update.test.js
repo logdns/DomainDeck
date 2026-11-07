@@ -30,7 +30,12 @@ test('up-to-date and empty release checks retain the actual installation capabil
   for (const releases of [[], [{ tag_name: 'v3.0.0-beta.8', prerelease: true }]]) {
     for (const installDirectory of [undefined, '/fixture-managed-install']) {
       const updater = createUpdater({ version: '3.0.0-beta.8', installDirectory, transport: async () => Response.json(releases) });
-      assert.deepEqual(await updater.check(), { available: false, current: '3.0.0-beta.8', installSupported: Boolean(installDirectory) });
+      const checked = await updater.check();
+      assert.equal(checked.available, false);
+      assert.equal(checked.current, '3.0.0-beta.8');
+      assert.equal(checked.installSupported, Boolean(installDirectory));
+      assert.ok(checked.checkedAt);
+      assert.equal(checked.latest?.version || null, releases.length ? '3.0.0-beta.8' : null);
     }
   }
 });
@@ -73,7 +78,16 @@ test('verified update creates a consistent backup and atomically changes the ins
   } });
   try {
     await updater.check();
+    await assert.rejects(updater.download('3.0.0-beta.99'), /Selected update changed/);
+    assert.equal((await updater.download('3.0.0-beta.2')).downloadState, 'ready');
+    assert.equal(updater.status().downloadState, 'ready');
+    assert.equal(readlinkSync(join(root, 'current')), previous);
+    assert.equal(readdirSync(dataDirectory).some((name) => name.startsWith('before-update-')), false);
+    await updater.download('3.0.0-beta.2');
+    assert.equal(requests, 2);
+    await assert.rejects(updater.apply('3.0.0-beta.99'), /Selected update changed/);
     assert.equal((await updater.apply()).version, '3.0.0-beta.2');
+    assert.equal(requests, 2);
     const current = readlinkSync(join(root, 'current'));
     assert.notEqual(current, previous);
     assert.equal(JSON.parse(readFileSync(join(current, 'package.json'))).version, '3.0.0-beta.2');
@@ -86,4 +100,52 @@ test('verified update creates a consistent backup and atomically changes the ins
     await new Promise((resolve) => setTimeout(resolve, 1100));
     assert.equal(restarted, true);
   } finally { database.close(); rmSync(root, { recursive: true }); }
+});
+
+test('download failures expose retry state without switching installation and checks clear cached bundles', async () => {
+  const bytes = Buffer.from(JSON.stringify(bundle()));
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  let valid = false;
+  let downloads = 0;
+  const updater = createUpdater({ version: '3.0.0-beta.1', installDirectory: '/unused-fixture', transport: async (url) => {
+    if (url.includes('/releases?')) return Response.json([{ tag_name: 'v3.0.0-beta.2', prerelease: true, published_at: '2026-11-07T12:00:00Z', body: 'Fixture release notes', assets: [{ name: 'DomainDeck-node.bundle.json', size: bytes.length, digest: `sha256:${digest}`, browser_download_url: 'https://github.com/logdns/DomainDeck/releases/download/v3.0.0-beta.2/DomainDeck-node.bundle.json' }] }]);
+    downloads += 1;
+    return new Response(valid ? bytes : 'corrupt-fixture');
+  } });
+  const checked = await updater.check();
+  assert.equal(checked.latest.notes, 'Fixture release notes');
+  assert.equal(checked.latest.size, bytes.length);
+  await assert.rejects(updater.download(), /checksum mismatch/);
+  assert.equal(updater.status().downloadState, 'error');
+  assert.ok(updater.status().downloadError);
+  valid = true;
+  assert.equal((await updater.download()).downloadState, 'ready');
+  assert.equal(updater.status().downloadError, '');
+  await updater.check();
+  assert.equal(updater.status().downloadState, 'idle');
+  await updater.download();
+  assert.equal(downloads, 3);
+});
+
+test('manual installs cannot prepare updates and concurrent checks cannot invalidate an active download', async () => {
+  const manual = createUpdater({ version: '3.0.0-beta.1' });
+  await assert.rejects(manual.download(), /systemd installer/);
+  let finish;
+  let started;
+  const downloading = new Promise((resolve) => { started = resolve; });
+  const bytes = Buffer.from(JSON.stringify(bundle()));
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const updater = createUpdater({ version: '3.0.0-beta.1', installDirectory: '/unused-fixture', transport: async (url) => {
+    if (url.includes('/releases?')) return Response.json([{ tag_name: 'v3.0.0-beta.2', prerelease: true, assets: [{ name: 'DomainDeck-node.bundle.json', digest: `sha256:${digest}`, browser_download_url: 'https://github.com/fixture' }] }]);
+    started();
+    return new Promise((resolve) => { finish = () => resolve(new Response(bytes)); });
+  } });
+  await updater.check();
+  const task = updater.download();
+  await downloading;
+  await assert.rejects(updater.check(), /in progress/);
+  await assert.rejects(updater.download(), /in progress/);
+  await assert.rejects(updater.apply(), /in progress/);
+  finish();
+  assert.equal((await task).downloadState, 'ready');
 });

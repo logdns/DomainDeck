@@ -58,27 +58,71 @@ async function download(url, transport, limit) {
 export function createUpdater({ version, installDirectory, dataDirectory, database, transport = fetch, restart = () => {} }) {
   let available = null;
   let busy = false;
+  let latest = null;
+  let checkedAt = null;
+  let prepared = null;
+  let downloadState = 'idle';
+  let downloadError = '';
+  const state = () => ({ current: version, installSupported: Boolean(installDirectory), channel: version.includes('-beta.') ? 'beta' : 'stable', latest, checkedAt, available: Boolean(available), downloadState, downloadError, busy });
+  const requireAvailable = (expectedVersion) => {
+    if (!available || Date.now() - available.checkedAt > 600000) throw new HttpError(409, 'Check for updates again');
+    if (expectedVersion && expectedVersion !== available.version) throw new HttpError(409, 'Selected update changed; check for updates again');
+  };
+  const prepare = async () => {
+    if (prepared) return;
+    downloadState = 'downloading';
+    downloadError = '';
+    try {
+      const bytes = await download(available.url, transport, { bytes: 32 * 1024 * 1024, redirects: 4 });
+      if (createHash('sha256').update(bytes).digest('hex') !== available.digest) throw new Error('Update checksum mismatch');
+      const bundle = validateBundle(JSON.parse(bytes));
+      if (bundle.version !== available.version) throw new Error('Release version mismatch');
+      prepared = bundle;
+      downloadState = 'ready';
+    } catch {
+      prepared = null;
+      downloadState = 'error';
+      downloadError = 'GitHub 下载或 SHA-256 校验失败，请重新下载；当前程序未替换。';
+      throw new HttpError(502, 'GitHub download or update checksum mismatch; retry download. Current installation unchanged.');
+    }
+  };
   return {
-    status() { return { current: version, installSupported: Boolean(installDirectory), channel: version.includes('-beta.') ? 'beta' : 'stable' }; },
+    status() { return state(); },
     async check() {
+      if (busy) throw new HttpError(409, 'An update download or installation is in progress');
       available = null;
+      prepared = null;
+      latest = null;
+      checkedAt = null;
+      downloadState = 'idle';
+      downloadError = '';
       const releases = JSON.parse((await download('https://api.github.com/repos/logdns/DomainDeck/releases?per_page=30', transport, { bytes: 1024 * 1024, redirects: 2 })).toString());
       const release = releases.filter((item) => !item.draft && /^v3\.\d+\.\d+(?:-beta\.\d+)?$/.test(item.tag_name) && (version.includes('-beta.') || !item.prerelease)).sort((first, second) => compareVersions(second.tag_name.slice(1), first.tag_name.slice(1)))[0];
-      if (!release || compareVersions(release.tag_name.slice(1), version) <= 0) return { available: false, current: version, installSupported: Boolean(installDirectory) };
-      const asset = release.assets.find((item) => item.name === 'DomainDeck-node.bundle.json');
+      checkedAt = new Date().toISOString();
+      if (!release) return { ...state(), version };
+      const asset = release.assets?.find((item) => item.name === 'DomainDeck-node.bundle.json');
+      latest = { version: release.tag_name.slice(1), source: 'github', publishedAt: release.published_at || null, size: asset?.size || null, notes: String(release.body || '').slice(0, 12000), url: `https://github.com/logdns/DomainDeck/releases/tag/${release.tag_name}` };
+      if (compareVersions(latest.version, version) <= 0) return { ...state(), version: latest.version };
       if (!asset || !/^sha256:[a-f0-9]{64}$/.test(asset.digest || '')) throw new HttpError(502, 'Release lacks a GitHub SHA-256 digest');
       available = { version: release.tag_name.slice(1), url: asset.browser_download_url, digest: asset.digest.slice(7), checkedAt: Date.now() };
-      return { available: true, current: version, version: available.version, installSupported: Boolean(installDirectory) };
+      return { ...state(), version: available.version };
     },
-    async apply() {
+    async download(expectedVersion) {
       if (!installDirectory) throw new HttpError(409, 'Install with the Linux systemd installer to enable updates');
-      if (!available || Date.now() - available.checkedAt > 600000 || busy) throw new HttpError(409, 'Check for updates again');
+      requireAvailable(expectedVersion);
+      if (busy) throw new HttpError(409, 'An update download or installation is in progress');
+      busy = true;
+      try { await prepare(); return { ...state(), busy: false, version: available.version }; }
+      finally { busy = false; }
+    },
+    async apply(expectedVersion) {
+      if (!installDirectory) throw new HttpError(409, 'Install with the Linux systemd installer to enable updates');
+      requireAvailable(expectedVersion);
+      if (busy) throw new HttpError(409, 'An update download or installation is in progress');
       busy = true;
       try {
-        const bytes = await download(available.url, transport, { bytes: 32 * 1024 * 1024, redirects: 4 });
-        if (createHash('sha256').update(bytes).digest('hex') !== available.digest) throw new HttpError(502, 'Update checksum mismatch');
-        const bundle = validateBundle(JSON.parse(bytes));
-        if (bundle.version !== available.version) throw new HttpError(502, 'Release version mismatch');
+        await prepare();
+        const bundle = prepared;
         const releases = join(installDirectory, 'releases');
         mkdirSync(releases, { recursive: true, mode: 0o700 });
         const directory = join(releases, `${bundle.version}-${randomUUID()}`);
@@ -94,6 +138,8 @@ export function createUpdater({ version, installDirectory, dataDirectory, databa
         symlinkSync(directory, temporary, 'dir');
         renameSync(temporary, current);
         available = null;
+        prepared = null;
+        downloadState = 'idle';
         setTimeout(restart, 1000).unref();
         return { ok: true, version: bundle.version, restarting: true };
       } finally { busy = false; }
