@@ -1,6 +1,6 @@
 # 发布前专项安全检查
 
-beta.6 追加检查：恢复 Vben 前端后使用独立 `/api/vben` 兼容层，每个内部调用重新授权，viewer 不返回财务/审计。秘密输入留空保留密文；连接用途限制在报价、购买及 DNS 区域操作生效。bundle 只允许受限静态路径，检查入口引用并支持规范 base64；拒绝穿越、重复、超量。CSV 过滤空白后的公式前缀。CI 新增真实 Chromium 测试，与依赖准备阶段隔离；项目执行阶段禁网且不注入发布 token。源码公开扫描不包含父目录的真实数据。
+beta.7 追加检查：恢复 Vben 前端后使用独立 `/api/vben` 兼容层，每个内部调用重新授权，viewer 不返回财务/审计。秘密输入留空保留密文；连接用途限制在报价、购买及 DNS 区域操作生效。bundle 只允许受限静态路径，检查入口引用并支持规范 base64；拒绝穿越、重复、超量。CSV 过滤空白后的公式前缀。CI 新增真实 Chromium 测试，与依赖准备阶段隔离；项目执行阶段禁网且不注入发布 token。源码公开扫描不包含父目录的真实数据。
 
 依赖审计使用 npm 官方 registry，修复 Vue、Vue I18n、Axios、Vite、Zod 及间接依赖的已知高危公告并更新锁文件。2026-11-07 的 `pnpm audit --prod` 结果为 0 critical、0 high、5 moderate、2 low（工作区合计，包含构建/检查工具）。剩余公告涉及 smol-toml、serialize-javascript、postcss-selector-parser、deepmerge、glob 和 minimatch，路径均位于源码检查、样式处理或构建插件，不进入零 npm 依赖的 Node 服务。它们仍是已知限制；不通过强制跨主版本覆盖来掩盖。构建只处理仓库源文件，执行阶段禁网且无发布凭据。Actions 在依赖准备阶段执行 high/critical 审计门禁；本记录不是对将来新公告的保证。
 

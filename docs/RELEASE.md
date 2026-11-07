@@ -1,4 +1,4 @@
-# DomainDeck 3.0.0-beta.6
+# DomainDeck 3.0.0-beta.7
 
 本版恢复原有 **Vue Vben Admin 5.8 + Ant Design Vue** 界面，并将它直接接到 Node.js 24 + SQLite。前端源码与锁定依赖纳入本仓库，构建不依赖相邻旧工程；原蓝色品牌、16px 正文、导航、概览卡片、主题、语言和手机布局保留。
 
@@ -26,7 +26,7 @@ sudo bash deploy/install.sh --public-origin https://你的实际域名
 
 **beta.1–beta.5 首次升级到本版必须使用完整 tar 包重新执行安装器**，旧在线更新器无法接收 Vben 多文件 bundle。保留已有账户、密码、SQLite、vault.key 和站点配置；请先停服备份整个 `/var/lib/domaindeck-node`。启动时事务升级到 schema 6，降级须恢复匹配的数据库备份。新安装管理员 `admin` 的随机密码保存在该目录的 `initial-admin-password`，已有安装不会重置密码。
 
-`DomainDeck-node.bundle.json` 用于 beta.6 及后续版本之间的在线更新。更新依赖 GitHub SHA-256 摘要校验、数据库备份和原子链接切换；当前不提供自动健康回滚。
+`DomainDeck-node.bundle.json` 用于本版及后续版本之间的在线更新。更新依赖 GitHub SHA-256 摘要校验、数据库备份和原子链接切换；当前不提供自动健康回滚。
 
 ## 验证与边界
 

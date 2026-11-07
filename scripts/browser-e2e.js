@@ -20,7 +20,7 @@ const key = randomBytes(32);
 seedDemo(database, key);
 saveSetting(database, 'safety', { billingEnabled: true, confirmWrites: true });
 saveSetting(database, 'contacts', { registrant: 'fixture-contact' });
-const server = createApp(database, { key, transport: demoTransport, version: '3.0.0-beta.6', demo: true });
+const server = createApp(database, { key, transport: demoTransport, version: '3.0.0-beta.7', demo: true });
 server.listen(0, '127.0.0.1');
 await once(server, 'listening');
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -41,8 +41,10 @@ const login = async (username) => {
 };
 const visit = async (path) => {
   await page.goto(`${base}/#${path}`);
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)))));
   await page.locator('.deck-heading:visible').last().waitFor();
   await page.waitForLoadState('networkidle');
+  await page.waitForFunction(() => !document.querySelector('.fade-slide-enter-active,.fade-slide-leave-active'));
   assert.ok((await page.locator('.deck-heading:visible').last().textContent()).trim(), path);
   console.log(`Browser page OK: ${path}`);
 };
@@ -69,10 +71,13 @@ try {
   await page.getByRole('row').filter({ hasText: 'Demo spaceship' }).getByRole('button', { name: /^注\s*册$/ }).click();
   const registration = page.getByRole('dialog').filter({ hasText: '注册域名' });
   await registration.getByRole('button', { name: '确认注册', exact: true }).click();
-  await page.getByRole('button', { name: /^取\s*消$/ }).last().click();
+  const purchaseConfirmation = page.locator('.ant-modal-confirm');
+  await purchaseConfirmation.waitFor({ state: 'visible' });
+  await purchaseConfirmation.getByRole('button', { name: /^取\s*消$/ }).click();
+  await purchaseConfirmation.waitFor({ state: 'hidden' });
   assert.equal(database.prepare('SELECT count(*) AS count FROM orders').get().count, 0);
   await registration.getByRole('button', { name: '确认注册', exact: true }).click();
-  await page.getByRole('button', { name: '确认扣款并提交', exact: true }).click();
+  await purchaseConfirmation.getByRole('button', { name: '确认扣款并提交', exact: true }).click();
   await registration.waitFor({ state: 'hidden' });
   assert.equal(database.prepare('SELECT status FROM orders').get().status, 'pending');
   await visit('/providers');
@@ -98,8 +103,10 @@ try {
   await visit('/dns');
   await page.screenshot({ path: join(output, 'dns.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.querySelector('[data-layout-region=layout]')?.dataset.mobile === 'true');
   await visit('/overview');
-  await page.screenshot({ path: join(output, 'mobile.png'), fullPage: true });
+  await page.waitForFunction(() => !document.querySelector('.ant-message-notice'));
+  await page.screenshot({ path: join(output, 'mobile.png'), fullPage: true, animations: 'disabled' });
   await context.clearCookies();
   await page.evaluate(() => { localStorage.clear(); sessionStorage.clear(); });
   await page.goto('about:blank');
