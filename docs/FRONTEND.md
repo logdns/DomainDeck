@@ -2,6 +2,14 @@
 
 `frontend/` 是原工作台的 Vue Vben Admin 5.8 工作区，使用 Vue 3、Pinia、Vue Router、Ant Design Vue。Vben 官方文档：<https://doc.vben.pro/>。实际业务页面在 `apps/web-antd/src/views`，保留蓝色 token、大字体、明暗主题、语言切换、权限菜单、卡片、导航和手机布局。
 
+## 界面模板
+
+顶部「界面模板」可选择 `Vben Classic` 或 `Board UI`，选择保存在本机浏览器。Board UI 提供独立导航外壳与资产概览，业务页继续使用已有 Vue 页面、Pinia、路由守卫及同源 API。Board UI 中的侧栏底部可切回 Vben。
+
+BoardUI 官方组件库面向 React 19；项目通过 `board-root.vue` 管理独立 React root，接收 Vue 的数据和回调，卸载时调用 `root.unmount()`。React 不读取登录令牌，不另建请求层，也不改变后端权限。导航来自 Vben 已授权菜单，快捷操作按权限显示；明暗和中英文仍使用 Vben 偏好设置。
+
+`src/boardui/` 包含 MIT 免费 Button/Badge 的适配、作用域设计变量和自制工作空间模板，来源及许可证见 [第三方声明](THIRD-PARTY.md)。不含付费 Pro 模板。工作台使用真实概览数据，不生成虚构趋势；加载、失败、空资产和到期提醒有独立状态。
+
 ## 接口边界
 
 浏览器统一请求同站点 `/api/vben`，由 `src/vben.js` 适配旧页面的列表/字段/角色/表单；适配层通过 `authorize` 逐条检查调用的内部路由，再调用现有业务服务。`/api/v1` 保留为规范化 Node API。数据库 schema 6 记录接入用途、测试结果及同步时间；配置留空保留加密凭据，列表不返回秘密。

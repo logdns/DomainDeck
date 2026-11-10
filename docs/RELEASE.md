@@ -1,21 +1,22 @@
-# DomainDeck 3.0.0-beta.10
+# DomainDeck 3.0.0-beta.11
 
-- 服务商接入弹窗默认展开凭据获取与权限指引，逐字段展示用途、格式和官方入口。
-- Spaceship：明确读取、DNS 写入、计费、转移、联系人及异步状态权限。
-- Porkbun：补充逐域名 API Access、密钥权限、域名/IP 范围与测试限制。
-- Cloudflare：区分 DNS 和 Registrar 权限、Account ID 与 Zone ID，说明注册/转入条件。
-- GoDaddy：标明当前 v1 模板需要 Production Classic Key/Secret，不能填写 v3 PAT；Namecheap：说明生产 API 开通及服务器出口 IPv4 白名单。
-- 自定义模板文档链接只允许不含账户密码的 HTTPS URL，拒绝脚本、data 和明文 HTTP 链接。
-- 重写 README 和当前接入文档，清除旧版迁移对照及历史说明；发布页仅保留 beta.8 及更新版本。
+- 新增可切换的 Board UI 模板。顶部「界面模板 → Board UI」启用，侧栏底部可切回 Vben Classic；选择保存在当前浏览器，升级后默认保留经典界面。
+- 新工作空间提供权限导航、域名/DNS/续费统计、到期高亮、服务商分布和快捷操作，数据来自现有概览接口。
+- 支持功能搜索与 Ctrl/⌘ K、手机抽屉导航、明暗主题、中英文和刷新后保持模板选择。
+- 使用 React 19 与 BoardUI 官方 MIT 免费 Button/Badge 组件适配；自制工作空间模板不包含付费 Pro 模板。许可证随完整包及在线更新包分发。
+- 原有业务页面继续使用 Vben、Pinia、路由权限和同源 API；保留注册商指引、域名交易、DNS 和在线更新。
+- 加载失败、空数据与缓存数据分别提示；修复特殊服务商名称可能干扰分布计数的问题。
 
 ## 安装和升级
 
 下载 `DomainDeck-node-linux.tar.gz` 与 `SHA256SUMS.txt`，核对摘要后解压并运行 `sudo bash deploy/install.sh --public-origin https://你的实际域名`。
 
-beta.8、beta.9 的 systemd 安装可通过后台「检查更新」下载校验并确认升级。手动运行使用完整包重新运行安装器。升级前备份 `/var/lib/domaindeck-node`；安装器保留账户、数据库、密钥和公开站点配置。
+beta.8–beta.10 的 systemd 安装可通过后台「检查更新」下载校验并确认升级。手动运行使用完整包重新运行安装器。升级前备份 `/var/lib/domaindeck-node`；安装器保留账户、数据库、密钥和公开站点配置。本版无数据库 schema 变更。
 
 ## 验证范围
 
-Actions 对 Vben 执行类型检查、单元测试和生产构建；对后端执行 x64/ARM64 测试、安装器检查、打包与摘要校验；Chromium 验证桌面、手机、五家接入指引及更新流程。新增安全回归验证自定义文档链接过滤和预设覆盖隔离。
+Actions 对前端执行类型检查、单元测试和生产构建；对后端执行 x64/ARM64 测试、安装器检查、打包与摘要校验；Chromium 验证经典界面、Board UI、桌面/手机、明暗主题、中英文、模板持久化、搜索、只读权限、退出重登、五家接入指引和更新流程。
+
+本次专项复核包括 React/Vue 生命周期、同源数据边界、菜单及快捷入口权限、文本转义、特殊服务商名称、依赖锁文件和第三方许可证。React 模板不读取认证令牌或服务商密钥，不建立第二套请求层。
 
 使用虚构账户和模拟服务商；真实扣费、外发通知和实机 systemd 自启不属于模拟测试结果。本次为改动范围的专项安全检查，不等同于独立完整审计；依赖审计结果见 Actions 和 [安全说明](SECURITY.md)。

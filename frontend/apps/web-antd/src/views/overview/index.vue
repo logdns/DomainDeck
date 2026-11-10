@@ -25,6 +25,10 @@ import { usePermissions } from '#/composables/use-permissions';
 import { $t } from '#/locales';
 import { useOverviewStore } from '#/store/overview';
 import { expiryTone, filterDomains, providerLabel } from '#/utils/domain-view';
+import BoardOverview from './board.vue';
+import { useInterfaceTemplate } from '#/composables/use-interface-template';
+
+const { interfaceTemplate } = useInterfaceTemplate();
 
 const router = useRouter();
 const { can } = usePermissions();
@@ -147,7 +151,8 @@ function activityLabel(action: string) {
 </script>
 
 <template>
-  <Page>
+  <BoardOverview v-if="interfaceTemplate === 'boardui'" />
+  <Page v-else>
     <template #extra>
       <span class="sync-time" role="status">{{ updatedLabel }}</span>
       <Button :loading="loading" @click="overview.refresh"

@@ -191,7 +191,7 @@ jobs:
           source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'browser-output'
           target = pathlib.Path('browser-evidence')
           target.mkdir()
-          for name in ['login.png', 'overview.png', 'domains.png', 'dns.png', 'mobile.png', 'failure.png', 'result.json']:
+          for name in ['login.png', 'overview.png', 'domains.png', 'dns.png', 'mobile.png', 'boardui-desktop.png', 'boardui-dark.png', 'boardui-mobile.png', 'failure.png', 'result.json']:
               if not (source / name).exists():
                   continue
               descriptor = os.open(source / name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)

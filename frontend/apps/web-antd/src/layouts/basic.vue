@@ -12,6 +12,11 @@ import { useAuthStore } from '#/store';
 import { usePermissions } from '#/composables/use-permissions';
 import { $t } from '#/locales';
 import LoginForm from '#/views/_core/authentication/login.vue';
+import BoardLayout from './board.vue';
+import TemplateSwitch from '#/components/template-switch.vue';
+import { useInterfaceTemplate } from '#/composables/use-interface-template';
+
+const { interfaceTemplate } = useInterfaceTemplate();
 
 const router = useRouter();
 const userStore = useUserStore();
@@ -46,13 +51,16 @@ async function handleLogout() {
 </script>
 
 <template>
+  <BoardLayout v-if="interfaceTemplate === 'boardui'" />
   <BasicLayout
+    v-else
     :avatar
     :text="userStore.userInfo?.realName"
     @clear-preferences-and-logout="handleLogout"
     @logout="handleLogout"
   >
     <template #header-left-1>
+      <TemplateSwitch />
       <div class="deck-header-label">
         <span class="deck-header-dot" /><span
           >DomainDeck <span class="deck-header-divider">/</span>

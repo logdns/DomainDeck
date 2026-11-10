@@ -8,13 +8,16 @@ import { App, ConfigProvider, theme } from 'ant-design-vue';
 
 import { antdLocale } from '#/locales';
 import { typography } from '#/design/typography';
+import { useInterfaceTemplate } from '#/composables/use-interface-template';
 
 defineOptions({ name: 'App' });
 
 const { isDark } = usePreferences();
 const { tokens } = useAntdDesignTokens();
+const { interfaceTemplate } = useInterfaceTemplate();
 
 const tokenTheme = computed(() => {
+  const board = interfaceTemplate.value === 'boardui';
   const algorithm = isDark.value
     ? [theme.darkAlgorithm]
     : [theme.defaultAlgorithm];
@@ -31,15 +34,15 @@ const tokenTheme = computed(() => {
       ...typography,
       borderRadius: 10,
       colorPrimary: isDark.value ? '#78a7ff' : '#2563eb',
-      colorBgContainer: isDark.value ? '#182435' : '#ffffff',
-      colorBorderSecondary: isDark.value ? '#2d3d54' : '#e4eaf3',
-      colorText: isDark.value ? '#e1eafa' : '#172b4d',
-      colorTextSecondary: isDark.value ? '#b0c0d7' : '#526581',
+      colorBgContainer: isDark.value ? (board ? '#1b1b1e' : '#182435') : '#ffffff',
+      colorBorderSecondary: isDark.value ? (board ? '#343439' : '#2d3d54') : (board ? '#e5e7eb' : '#e4eaf3'),
+      colorText: isDark.value ? (board ? '#f4f4f5' : '#e1eafa') : (board ? '#18181b' : '#172b4d'),
+      colorTextSecondary: isDark.value ? (board ? '#aeb2bd' : '#b0c0d7') : (board ? '#616875' : '#526581'),
       colorTextTertiary: isDark.value ? '#a4b5ce' : '#596d89',
       colorTextQuaternary: isDark.value ? '#a4b5ce' : '#596d89',
     },
     components: {
-      Card: { borderRadiusLG: 16 },
+      Card: { borderRadiusLG: board ? 12 : 16 },
       Table: { borderRadiusLG: 12 },
       Button: { fontWeight: 600 },
     },
