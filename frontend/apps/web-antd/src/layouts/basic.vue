@@ -13,6 +13,7 @@ import { usePermissions } from '#/composables/use-permissions';
 import { $t } from '#/locales';
 import LoginForm from '#/views/_core/authentication/login.vue';
 import BoardLayout from './board.vue';
+import ProLayout from './pro.vue';
 import TemplateSwitch from '#/components/template-switch.vue';
 import { useInterfaceTemplate } from '#/composables/use-interface-template';
 
@@ -52,6 +53,7 @@ async function handleLogout() {
 
 <template>
   <BoardLayout v-if="interfaceTemplate === 'boardui'" />
+  <ProLayout v-else-if="interfaceTemplate === 'pro'" />
   <BasicLayout
     v-else
     :avatar

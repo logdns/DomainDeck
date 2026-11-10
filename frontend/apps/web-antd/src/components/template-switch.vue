@@ -15,6 +15,7 @@ const { interfaceTemplate, selectTemplate } = useInterfaceTemplate();
     >
       <option value="vben">Vben Classic</option>
       <option value="boardui">Board UI</option>
+      <option value="pro">Ant Design Pro</option>
     </select>
   </label>
 </template>

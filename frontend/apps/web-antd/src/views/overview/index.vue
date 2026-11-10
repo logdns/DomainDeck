@@ -26,6 +26,7 @@ import { $t } from '#/locales';
 import { useOverviewStore } from '#/store/overview';
 import { expiryTone, filterDomains, providerLabel } from '#/utils/domain-view';
 import BoardOverview from './board.vue';
+import ProOverview from './pro.vue';
 import { useInterfaceTemplate } from '#/composables/use-interface-template';
 
 const { interfaceTemplate } = useInterfaceTemplate();
@@ -152,6 +153,7 @@ function activityLabel(action: string) {
 
 <template>
   <BoardOverview v-if="interfaceTemplate === 'boardui'" />
+  <ProOverview v-else-if="interfaceTemplate === 'pro'" />
   <Page v-else>
     <template #extra>
       <span class="sync-time" role="status">{{ updatedLabel }}</span>

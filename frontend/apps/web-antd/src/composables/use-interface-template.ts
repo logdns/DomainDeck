@@ -1,10 +1,12 @@
 import { useStorage } from '@vueuse/core';
 
-const interfaceTemplate = useStorage<'boardui' | 'vben'>('domaindeck-interface-template', 'vben');
+export type InterfaceTemplate = 'boardui' | 'pro' | 'vben';
+
+const interfaceTemplate = useStorage<InterfaceTemplate>('domaindeck-interface-template', 'vben');
 
 export function useInterfaceTemplate() {
   function selectTemplate(value: string) {
-    interfaceTemplate.value = value === 'boardui' ? 'boardui' : 'vben';
+    interfaceTemplate.value = value === 'boardui' || value === 'pro' ? value : 'vben';
   }
   return { interfaceTemplate, selectTemplate };
 }

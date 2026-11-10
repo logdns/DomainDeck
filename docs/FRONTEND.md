@@ -4,7 +4,7 @@
 
 ## 界面模板
 
-顶部「界面模板」可选择 `Vben Classic` 或 `Board UI`，选择保存在本机浏览器。Board UI 提供独立导航外壳与资产概览，业务页继续使用已有 Vue 页面、Pinia、路由守卫及同源 API。Board UI 中的侧栏底部可切回 Vben。
+「界面模板」可选择 `Vben Classic`、`Board UI` 或 `Ant Design Pro`，选择保存在本机浏览器。Board UI 提供 React 工作空间外壳与资产概览；Ant Design Pro 模板参考官方 Workplace 的欢迎区、响应式指标卡、左右工作区和快捷导航布局，使用项目既有 Vue 与 Ant Design Vue 实现，不复制 Umi/React 示例工程或演示数据。Pro 模板展示真实账户资料、Pinia 概览、到期域名和权限允许的快捷入口；DNS 指标及辅助文案均按 `dns:read` 授权显示。所有模板共用 Vben 权限菜单、路由守卫、业务页面和同源 API；各模板可通过顶部选择器互相切换。
 
 BoardUI 官方组件库面向 React 19；项目通过 `board-root.vue` 管理独立 React root，接收 Vue 的数据和回调，卸载时调用 `root.unmount()`。React 不读取登录令牌，不另建请求层，也不改变后端权限。导航来自 Vben 已授权菜单，快捷操作按权限显示；明暗和中英文仍使用 Vben 偏好设置。
 
@@ -42,4 +42,4 @@ pnpm --filter @vben/web-antd build
 
 `.github/workflows/release.yml` 将联网准备依赖与禁网执行项目代码分开。前端先类型检查、Vitest、生产构建；后端在 x64/ARM64 上运行显式 `test/*.test.js`、打包和摘要核对；Chromium 在禁网容器中验证实际界面登录、全部业务页、接入同步、支付保存/刷新、手机视口及只读路由。浏览器使用随机临时数据库和模拟服务商，截图上传至 Actions 的 `vben-browser-evidence`。
 
-CI 比较双架构产物一致后才创建标签 Release。不能仅因后端健康接口可达就认为界面登录或第三方账户成功；真实凭据、扣款、发信和生产反向代理仍需在自己的环境验证。
+CI 比较双架构产物一致后才创建标签 Release，并保存 Board UI 与 Ant Design Pro 桌面/手机浏览器证据。只读浏览器角色不授予 `dns:read`，并验证 Pro 模板隐藏区域数量、活动区域数和 DNS 导航。不能仅因后端健康接口可达就认为界面登录或第三方账户成功；真实凭据、扣款、发信和生产反向代理仍需在自己的环境验证。

@@ -43,7 +43,7 @@ describe('Board UI workspace data and security states', () => {
   it('limits shortcuts and navigation to the supplied authorized routes and supports English', () => {
     const html = renderToStaticMarkup(createElement(WorkspaceShell, {
       copy: boardCopy('en-US'), menus: [{ path: '/domains', name: 'Domain assets' }], path: '/domains', title: 'Domains', username: 'Fixture', dark: false,
-      navigate: () => {}, classic: () => {}, toggleTheme: () => {}, toggleLanguage: () => {}, logout: () => {},
+      navigate: () => {}, classic: () => {}, pro: () => {}, toggleTheme: () => {}, toggleLanguage: () => {}, logout: () => {},
     }));
     expect(html).toContain('aria-current="page"');
     expect(html).toContain('Domain assets');

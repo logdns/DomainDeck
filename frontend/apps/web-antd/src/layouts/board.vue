@@ -34,6 +34,7 @@ const model = computed<ShellModel>(() => ({
   dark: isDark.value,
   navigate: (path) => { void router.push(path); },
   classic: () => selectTemplate('vben'),
+  pro: () => selectTemplate('pro'),
   toggleTheme: () => updatePreferences({ theme: { mode: isDark.value ? 'light' : 'dark' } }),
   toggleLanguage: () => updatePreferences({ app: { locale: preferences.app.locale === 'en-US' ? 'zh-CN' : 'en-US' } }),
   logout: () => { void auth.logout(false); },

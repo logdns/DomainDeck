@@ -1,8 +1,8 @@
 # DomainDeck
 
-域名、DNS 和注册商管理工作台。当前版本 **3.0.0-beta.11**，使用 **Node.js 24 + SQLite + Vue Vben Admin 5.8**，支持蓝色主题、大字体、深色模式、手机布局和权限菜单。发布包已包含编译后的界面，服务器无需安装前端依赖。
+域名、DNS 和注册商管理工作台。当前版本 **3.0.0-beta.12**，使用 **Node.js 24 + SQLite + Vue Vben Admin 5.8**，支持蓝色主题、大字体、深色模式、手机布局和权限菜单。发布包已包含编译后的界面，服务器无需安装前端依赖。
 
-顶部「界面模板」可切换 **Board UI**，提供 React 19 + BoardUI 免费组件构建的工作空间、权限导航、到期提醒、快捷操作和功能搜索；保留 Vben Classic，选择记在当前浏览器。实现与构建方式见 [前端说明](docs/FRONTEND.md)。
+顶部「界面模板」可切换 **Board UI** 或 **Ant Design Pro**。Pro 模板采用 Ant Design Pro Workplace 的欢迎区、指标卡、快捷导航和双栏信息布局，并用本项目 Vue + Ant Design Vue 组件实现；所有模板共用 Vben 权限路由、Pinia 数据和 API。DNS 指标与辅助信息按 DNS 读取权限显示。模板选择保存在当前浏览器。实现与构建方式见 [前端说明](docs/FRONTEND.md)。
 
 ## 功能
 
@@ -18,7 +18,7 @@ Cloudflare Registrar 不提供 WHOIS 或转入报价；GoDaddy 当前模板使�
 
 ## Linux 安装
 
-支持 Linux x64 / ARM64、systemd；官方 Node 运行时要求 glibc ≥ 2.28。下载 [最新发布包](https://github.com/logdns/DomainDeck/releases/tag/v3.0.0-beta.11) 中的 `DomainDeck-node-linux.tar.gz` 和 `SHA256SUMS.txt`，放在同一空目录：
+支持 Linux x64 / ARM64、systemd；官方 Node 运行时要求 glibc ≥ 2.28。下载 [最新发布包](https://github.com/logdns/DomainDeck/releases/tag/v3.0.0-beta.12) 中的 `DomainDeck-node-linux.tar.gz` 和 `SHA256SUMS.txt`，放在同一空目录：
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS.txt
@@ -47,7 +47,7 @@ sudo cat /var/lib/domaindeck-node/initial-admin-password
 
 进入「服务商」→「添加该服务商」，先阅读展开的凭据与权限指引，再填写密钥，保存后测试并同步。只做 DNS 时仅选择 DNS 用途。测试通过不代表具有全部写入或扣费权限；服务商自己的支付资料仍需在官方后台配置。
 
-systemd 安装的管理员可在「版本与设置」点击「检查更新」：发现新版自动下载并校验，点击「更新到版本号」并确认后才切换程序。beta.8–beta.10 可直接升级。手动启动不提供在线替换，使用完整程序包重新运行安装器。升级前备份数据，重装保留已有数据库、密钥和站点配置。
+systemd 安装的管理员可在「版本与设置」点击「检查更新」：发现新版自动下载并校验，点击「更新到版本号」并确认后才切换程序。beta.8–beta.11 可直接升级。手动启动不提供在线替换，使用完整程序包重新运行安装器。升级前备份数据，重装保留已有数据库、密钥和站点配置。
 
 发布页仅保留 beta.8 及更新版本；历史标签和发布附件已清理，数据库迁移兼容逻辑继续保留。[本版更新说明](docs/RELEASE.md)。
 

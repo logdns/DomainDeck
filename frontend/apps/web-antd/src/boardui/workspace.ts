@@ -13,6 +13,7 @@ export interface ShellModel {
   dark: boolean;
   navigate: (path: string) => void;
   classic: () => void;
+  pro: () => void;
   toggleTheme: () => void;
   toggleLanguage: () => void;
   logout: () => void;
@@ -59,7 +60,7 @@ export function WorkspaceShell(model: ShellModel) {
     h('div', { className: 'board-workspace-label' }, h('span', { className: 'board-workspace-avatar' }, 'D'), h('div', null, h('strong', null, copy.workspace), h('small', null, 'Board UI · DomainDeck'))),
     h('p', { className: 'board-nav-caption' }, copy.manage),
     h('nav', { 'aria-label': copy.navigation }, menus.map((item) => h('button', { key: item.path, type: 'button', className: `board-nav-item ${path === item.path ? 'is-active' : ''}`, 'aria-current': path === item.path ? 'page' : undefined, onClick: () => go(item.path) }, h(Icon, { name: menuIcon(item.path) }), h('span', null, item.name), item.path === '/overview' ? h(Badge, { color: path === item.path ? 'primary' : 'neutral' }, '01') : null))),
-    h('div', { className: 'board-sidebar-footer' }, h('p', null, copy.readOnly), h(Button, { variant: 'secondary', onClick: model.classic }, copy.classic)),
+    h('div', { className: 'board-sidebar-footer' }, h('p', null, copy.readOnly), h(Button, { variant: 'secondary', onClick: model.classic }, copy.classic), h(Button, { variant: 'secondary', onClick: model.pro }, 'Ant Design Pro')),
   );
   const results = menus.filter((item) => item.name.toLowerCase().includes(query.trim().toLowerCase()));
   return h('div', null,
